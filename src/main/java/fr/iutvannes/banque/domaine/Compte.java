@@ -112,6 +112,17 @@ public class Compte {
         solde = solde.subtract(montant);
     }
 
+    /**
+     * Preleve les frais mensuels de tenue de compte.
+     * Les frais sont toujours preleves, meme si le compte passe au-dela du decouvert autorise.
+     */
+    public void appliquerFraisTenueCompte(BigDecimal frais) {
+        verifierOuvert();
+        verifierMontant(frais);
+        solde = solde.subtract(frais);
+        operations.add(new Operation(this, TypeOperation.FRAIS, frais, LocalDateTime.now()));
+    }
+
     public void cloturer() {
         if (solde.signum() > 0) {
             throw new IllegalStateException("Un compte ne peut être clôturé que si son solde est nul");
@@ -129,7 +140,7 @@ public class Compte {
         if (montant == null) {
             throw new IllegalArgumentException("Le montant est obligatoire");
         }
-        if (montant.signum() <= 0) {
+        if (montant.signum() < 0) {
             throw new IllegalArgumentException("Le montant doit être strictement positif : " + montant);
         }
     }
