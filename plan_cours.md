@@ -231,17 +231,7 @@ La moyenne des quiz et la note de TP (pondérée par l'assiduité) comptent chac
 | AC21.04 Vérifier et valider la qualité par les tests | Tous les TP |
 | AC25.03 Critères de faisabilité | CM2 ; TP2 (grille de faisabilité) |
 
-## 7. Organisation des fichiers (calquée sur R3.07)
-
-```
-cours/cm1_… à cm6_…            diapos beamer (une par CM de 45 min)
-tp/tp1_… à tp6_…                sujets + correction/
-latex/common/                    préambules r402-slides-preamble.tex, r402-tp-preamble.tex, logos
-code/banque-starter/             projet de départ (dépôt modèle) : Spring Boot + front Vue 3 sans étape de construction
-docs/plan_cours.md
-```
-
-## 8. Choix faits
+## 7. Choix faits
 
 - Outil de bout en bout : **Playwright for Java**. C'est aujourd'hui l'outil le plus adopté pour les nouveaux projets ; il reste en Java (JUnit, Cucumber, même projet Maven), contrairement à Cypress qui impose JavaScript et un projet séparé.
 - Le module se concentre sur les tests : la couverture est mesurée par JaCoCo, complétée par les tests de mutation (PIT).
