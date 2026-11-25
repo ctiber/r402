@@ -1,0 +1,186 @@
+\documentclass[11pt]{article}
+\input{../../latex/common/r402-tp-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{./}}
+
+% A ajuster avant diffusion
+\newcommand{\rdatelimite}{la veille de la séance du TP4, à 23\,h\,59}
+
+\begin{document}
+
+\rtpheader{3}{Tests unitaires isolés avec Mockito}
+
+\begin{infobox}[Objectifs]
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item Tester un service sans base de données, sans réseau et sans dépendre de la date du jour.
+  \item Utiliser Mockito : \texttt{@Mock}, \texttt{when ... thenReturn / thenThrow}, \texttt{verify}, \texttt{never}, \texttt{ArgumentCaptor}.
+  \item Rendre testable une classe qui ne l'est pas, en injectant ses dépendances.
+  \item Distinguer un test qui vérifie le comportement d'un test trop couplé à l'implémentation.
+\end{itemize}
+\end{infobox}
+
+Continuez dans le dépôt de votre binôme, à partir de votre rendu du TP2. Mockito est déjà dans le \texttt{pom.xml} (\texttt{mockito-junit-jupiter}).
+
+% ================================================================
+\section{Le service à tester}
+
+La classe \texttt{VirementService} (paquetage \texttt{fr.iutvannes.banque.service}) dépend de quatre collaborateurs, tous reçus par son constructeur (\texttt{CompteRepository} est dans le paquetage \texttt{persistance}) :
+
+\begin{lstlisting}[language=Java]
+public interface CompteRepository {
+    Optional<Compte> findByNumero(String numero);
+    Compte save(Compte compte);
+    List<Compte> findAll();
+    List<Compte> findByTitulaireOrderByNumero(String titulaire);
+}
+public interface TauxChangeClient {
+    BigDecimal taux(Devise de, Devise vers);   // peut lever TauxIndisponibleException
+}
+public interface NotificationService {
+    void notifier(String numeroCompte, String message);   // peut lever NotificationException
+}
+
+public VirementService(CompteRepository comptes, TauxChangeClient taux,
+                       NotificationService notifications, Clock horloge)
+
+public void virer(String numeroSource, String numeroCible, BigDecimal montant)
+\end{lstlisting}
+
+La méthode \texttt{virer} doit respecter les règles suivantes. Les règles du TP1 sur \texttt{Compte} (montant, découvert, plafond\ldots) s'appliquent aussi : c'est \texttt{Compte} qui les vérifie.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\bfseries\color{qaaccentdark}}l >{\raggedright\arraybackslash}p{14cm}@{}}
+\toprule
+V1 & \textbf{Comptes.} Les deux comptes sont chargés par leur numéro. Si l'un d'eux n'existe pas : \texttt{CompteInconnuException}. Virer vers le même compte : \texttt{IllegalArgumentException}. \\
+V2 & \textbf{Jour.} Aucun virement n'est accepté le dimanche (selon l'horloge, fuseau \texttt{Europe/Paris}) : \texttt{VirementImpossibleException}. \\
+V3 & \textbf{Même devise.} La source est débitée du montant, la cible est créditée du même montant. Le service de change n'est \textbf{pas} appelé. \\
+V4 & \textbf{Devises différentes.} La cible est créditée de \texttt{montant × taux(deviseSource, deviseCible)}, arrondi à 2 décimales (\texttt{RoundingMode.HALF\_EVEN}). Si le service de change est indisponible (\texttt{TauxIndisponibleException}) : \texttt{VirementImpossibleException}. \\
+V5 & \textbf{Enregistrement.} Après un virement réussi, les deux comptes sont enregistrés. Un virement refusé (quelle qu'en soit la raison) ne modifie et n'enregistre \textbf{aucun} compte, et n'envoie aucune notification. \\
+V6 & \textbf{Notification.} Si le montant est \textbf{strictement supérieur} à 1\,000,00\,\euro{}, le titulaire du compte source est notifié avec le message \texttt{"Virement de <montant> € effectué vers <numeroCible>"}. Si l'envoi de la notification échoue (\texttt{NotificationException}), le virement \textbf{reste valide} : l'exception n'est pas propagée. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ================================================================
+\section{Tester \texttt{VirementService} avec Mockito (40 min)}
+
+\begin{exobox}{Mise en place}
+Créez \texttt{src/test/java/fr/iutvannes/banque/service/VirementServiceTest.java} :
+\begin{itemize}[leftmargin=1.2em]
+  \item annotez la classe avec \texttt{@ExtendWith(MockitoExtension.class)} ;
+  \item déclarez des \texttt{@Mock} pour le repository, le service de change et le service de notification ;
+  \item créez une horloge fixe un jour de semaine, par exemple :
+\begin{codebox}
+Clock.fixed(Instant.parse("2027-03-01T10:00:00Z"),
+            ZoneId.of("Europe/Paris"))
+\end{codebox}
+  \item construisez le service dans un \texttt{@BeforeEach}.
+\end{itemize}
+Écrivez une petite méthode utilitaire qui crée un compte et programme \texttt{findByNumero} pour le renvoyer : vous allez en avoir besoin dans presque tous les tests.
+\end{exobox}
+
+\begin{exobox}{Une règle, un groupe de tests}
+Écrivez les tests des règles V1 à V6, regroupés par règle avec \texttt{@Nested}. Pour chaque règle, testez au moins un cas nominal, un cas limite et un cas d'erreur. Quelques indications :
+\begin{enumerate}[leftmargin=1.4em]
+  \item \textbf{V1} : un repository qui renvoie \texttt{Optional.empty()}. Pensez à V5 : rien ne doit être enregistré (\texttt{verify(..., never())}).
+  \item \textbf{V2} : il faut une \textbf{autre} horloge, fixée un dimanche. Où se trouve exactement la limite entre samedi et dimanche ? Attention au fuseau horaire : \texttt{2027-03-06T23:30:00Z}, c'est quel jour à Paris ?
+  \item \textbf{V3} : vérifiez les soldes (état) \textbf{et} que le service de change n'a pas été appelé (\texttt{verifyNoInteractions}).
+  \item \textbf{V4} : programmez le taux avec \texttt{when(...).thenReturn(...)}. Choisissez un taux et un montant qui obligent à arrondir. Pour la panne, utilisez \texttt{thenThrow}.
+  \item \textbf{V5} : après un virement réussi, vérifiez que chaque compte est enregistré. Après un solde insuffisant (levé par \texttt{Compte}), vérifiez que rien n'est enregistré ni notifié.
+  \item \textbf{V6} : testez les montants 1\,000,00, 1\,000,01 et un montant plus élevé. Récupérez le message avec un \texttt{ArgumentCaptor} et vérifiez son contenu exact.
+  \item \textbf{V6, échec de notification} : \texttt{notifier} renvoie \texttt{void}, on ne peut donc pas écrire \texttt{when(...)}. Utilisez la forme suivante ; le virement doit réussir quand même.
+\begin{codebox}
+doThrow(new NotificationException("SMS indisponible"))
+    .when(notifications).notifier(any(), any());
+\end{codebox}
+\end{enumerate}
+\end{exobox}
+
+\begin{infobox}[Si Mockito proteste]
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item \texttt{UnnecessaryStubbingException} : vous avez programmé une réponse que le test n'utilise pas. Supprimez-la : elle rend le test trompeur.
+  \item \texttt{InvalidUseOfMatchersException} : vous mélangez des matchers (\texttt{any()}) et des valeurs brutes dans un même appel. Entourez les valeurs avec \texttt{eq(...)}.
+  \item \texttt{WantedButNotInvoked} / \texttt{TooManyActualInvocations} : le message indique les appels réellement reçus par le mock ; lisez-le, il contient souvent la réponse.
+\end{itemize}
+\end{infobox}
+
+\begin{exobox}{Corriger les bugs}
+Comme au TP1, le code fourni contient des bugs. Pour chacun : notez dans \texttt{docs/tp3.md} la règle violée et le test qui le révèle, corrigez le code, relancez \textbf{toute} la suite, puis faites un commit.
+
+Question : les tests Cucumber du TP2 utilisent aussi \texttt{VirementService}. Pourquoi n'ont-ils pas détecté ces bugs ? Qu'en concluez-vous sur la complémentarité des deux niveaux de tests ?
+\end{exobox}
+
+% ================================================================
+\section{Rendre une classe testable (30 min)}
+
+La classe \texttt{AlerteDecouvertJob} est exécutée chaque matin. Elle prévient par SMS les titulaires des comptes à découvert, sauf le week-end (les alertes du samedi et du dimanche sont envoyées le lundi). Elle a été écrite rapidement et n'a aucun test :
+
+\begin{lstlisting}[language=Java]
+public class AlerteDecouvertJob {
+
+    public int executer() {
+        CompteRepository comptes = new JdbcCompteRepository(
+            "jdbc:postgresql://localhost:5432/banque", "banque", "secret");
+        NotificationService sms =
+            new SmsNotificationService("https://api.sms.example", "CLE-API");
+
+        DayOfWeek jour = LocalDate.now().getDayOfWeek();
+        if (jour == DayOfWeek.SATURDAY || jour == DayOfWeek.SUNDAY) {
+            return 0;
+        }
+        int nbAlertes = 0;
+        for (Compte compte : comptes.findAll()) {
+            if (compte.getSolde().signum() < 0) {
+                sms.notifier(compte.getNumero(),
+                             "Votre compte est à découvert le " + LocalDate.now());
+                nbAlertes++;
+            }
+        }
+        return nbAlertes;
+    }
+}
+\end{lstlisting}
+
+\begin{exobox}{Refactoriser, puis tester}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Dans \texttt{docs/tp3.md}, listez tout ce qui empêche d'écrire un test unitaire de cette classe. Pour chaque point, dites ce qui se passerait si on lançait quand même un test.
+  \item Refactorisez la classe pour que ses dépendances (repository, notifications, horloge) soient \textbf{injectées par le constructeur}. Le comportement ne doit pas changer. Où les vraies implémentations seront-elles créées désormais ?
+  \item Écrivez ses tests avec Mockito : aucun compte, aucun compte à découvert, deux comptes à découvert sur trois, compte à solde exactement nul, samedi, dimanche, lundi. Vérifiez la valeur renvoyée \textbf{et} les notifications envoyées (destinataire et texte, date comprise).
+  \item Un SMS échoue (\texttt{NotificationException}) pour le premier compte : que fait la classe actuellement ? Est-ce souhaitable ? Écrivez le test qui fixe le comportement que vous jugez correct (les autres titulaires doivent-ils être prévenus ?), puis adaptez le code.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Des tests trop couplés ? (20 min)}
+
+\begin{exobox}{Un refactoring qui casse des tests}
+Un collègue propose une petite optimisation dans \texttt{VirementService} : remplacer les deux appels à \texttt{comptes.save(...)} par un seul appel à une nouvelle méthode \texttt{comptes.saveAll(List.of(source, cible))}. Ajoutez-la à l'interface \texttt{CompteRepository} (\texttt{List<Compte> saveAll(Iterable<Compte> comptes);} : Spring Data la fournit) et à \texttt{CompteRepositoryEnMemoire} (paquetage de test \texttt{doublures}).
+\begin{enumerate}[leftmargin=1.4em]
+  \item Faites la modification et relancez vos tests. Lesquels échouent ?
+  \item Le comportement observable du service a-t-il changé pour un utilisateur de la banque ? Les tests qui échouent signalaient-ils un vrai problème ?
+  \item Réécrivez ces tests pour qu'ils vérifient ce qui compte (les comptes enregistrés et leurs soldes), sans dépendre de la manière exacte de les enregistrer. Une piste : remplacer le mock du repository par un \textbf{fake} en mémoire (\texttt{CompteRepositoryEnMemoire}, fourni dans le paquetage de test \texttt{doublures}) dans certains tests.
+  \item En deux ou trois phrases dans \texttt{docs/tp3.md} : dans quels cas un \texttt{verify} est-il indispensable, et dans quels cas vaut-il mieux vérifier un état ?
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\clearpage
+\section{Rendu}
+
+\begin{infobox}[À rendre avant \rdatelimite]
+Sur le dépôt du binôme, un \textbf{tag} \texttt{tp3} pointant sur le commit rendu :
+\begin{codebox}
+git tag tp3
+git push origin tp3
+\end{codebox}
+Le commit doit contenir :
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item \texttt{VirementServiceTest.java} (règles V1 à V6) et \texttt{VirementService.java} corrigé ;
+  \item \texttt{AlerteDecouvertJob.java} refactorisée et \texttt{AlerteDecouvertJobTest.java} ;
+  \item les tests réécrits après le passage à \texttt{saveAll} ;
+  \item \texttt{docs/tp3.md} : journal des bugs, complémentarité avec Cucumber, analyse de \texttt{AlerteDecouvertJob}, réflexion sur \texttt{verify} ;
+  \item une suite complète qui passe : \texttt{./mvnw test}.
+\end{itemize}
+\end{infobox}
+
+\end{document}

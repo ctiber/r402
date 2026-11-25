@@ -1,0 +1,193 @@
+\documentclass[11pt]{article}
+\input{../../latex/common/r402-tp-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{./}}
+
+% A ajuster avant diffusion
+\newcommand{\rdatelimite}{la veille de la séance du TP3, à 23\,h\,59}
+
+% Gherkin (fichiers .feature), en francais
+\lstdefinelanguage{Gherkin}{
+  morekeywords={Quand, Alors, Et, Mais, Exemples, Contexte},
+  sensitive=true,
+  comment=[l]{\#},
+  morestring=[b]"
+}
+\newcommand{\gk}[1]{\textcolor{qacodekwl}{\textbf{#1}}}
+
+\begin{document}
+
+\rtpheader{2}{User stories, faisabilité et tests d'acceptation avec Cucumber}
+
+\begin{infobox}[Objectifs]
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item Transformer un besoin exprimé par un client en user stories INVEST.
+  \item Écrire leurs critères d'acceptation sous forme d'exemples (Étant donné / Quand / Alors).
+  \item Analyser la faisabilité de chaque story et décider : prête, \textit{spike}, reformuler, découper, abandonner.
+  \item Rendre les critères exécutables avec Cucumber et développer une story en partant de ses scénarios (ATDD).
+\end{itemize}
+\end{infobox}
+
+Ce TP comporte deux parties d'environ 45 minutes chacune. La première se fait \textbf{sans écrire de code}. Continuez dans le dépôt de votre binôme, à partir de votre rendu du TP1.
+
+% ================================================================
+\section{Partie 1 --- Du besoin aux stories (45 min)}
+
+\subsection*{Le besoin du client}
+
+La responsabilité produit de la banque vous a transmis le compte rendu suivant, après un entretien avec plusieurs conseillers et clients.
+
+\begin{tcolorbox}[enhanced, breakable, colback=white, colframe=qalinelight, boxrule=0.6pt, arc=2pt,
+  left=10pt, right=10pt, top=6pt, bottom=6pt, fontupper=\itshape\small]
+\textbf{\upshape Compte rendu --- évolutions de l'application bancaire}
+
+\begin{enumerate}[leftmargin=1.4em, label=\upshape B\arabic*.]
+  \item Beaucoup de clients paient leur loyer ou leur abonnement par virement chaque mois. Ils aimeraient \textbf{programmer un virement} à une date future, une seule fois ou tous les mois, sans avoir à se reconnecter. Si le jour venu le solde ne suffit pas, le virement ne doit pas être fait et le client doit le savoir. On peut annuler un virement programmé tant qu'il n'a pas été exécuté.
+  \item Pour limiter la fraude, les \textbf{retraits} (au guichet ou au distributeur) doivent être plafonnés à 500\,\euro{} par semaine glissante. Les conseillers insistent aussi sur un point : un client doit toujours pouvoir retirer la totalité de son solde en cas d'urgence.
+  \item Les clients qui voyagent veulent pouvoir \textbf{consulter leur solde dans une autre devise} (dollar, livre, franc suisse) et faire des virements vers des comptes en devises étrangères. Le taux utilisé doit être celui du jour. Nous n'avons pas encore choisi de fournisseur pour les taux de change ; un stagiaire a parlé d'une API gratuite trouvée sur Internet.
+  \item Le client doit être \textbf{prévenu rapidement} (par SMS ou par e-mail, selon ses préférences) quand son compte passe à découvert et quand un virement de plus de 1\,000\,\euro{} est effectué depuis son compte.
+  \item À terme, nous voudrions un \textbf{tableau de bord intelligent} qui analyse les dépenses des clients et leur donne des conseils personnalisés pour mieux gérer leur budget, comme le font les banques en ligne.
+\end{enumerate}
+\end{tcolorbox}
+
+\begin{exobox}{Écrire les user stories}
+Dans un fichier \texttt{docs/tp2.md} :
+\begin{enumerate}[leftmargin=1.4em]
+  \item Pour chacun des besoins B1 à B5, écrivez une ou plusieurs user stories au format « En tant que\ldots{} je veux\ldots{} afin de\ldots{} ». Identifiez les \textbf{rôles} : ils ne sont pas tous des clients.
+  \item Un besoin trop gros (\textit{epic}) doit être \textbf{découpé} en plusieurs stories plus petites. Lesquels ? Comment les avez-vous découpés ?
+  \item Vérifiez chaque story avec INVEST. Pour chaque lettre non respectée, indiquez pourquoi en une phrase.
+\end{enumerate}
+\end{exobox}
+
+\begin{exobox}{Écrire les critères d'acceptation}
+Pour les stories issues de \textbf{B1} et de \textbf{B4}, écrivez les critères d'acceptation sous forme de scénarios Gherkin (Étant donné / Quand / Alors), dans \texttt{docs/tp2.md} pour l'instant :
+\begin{itemize}[leftmargin=1.2em]
+  \item au moins trois scénarios par story : un cas nominal, un cas d'erreur, un cas limite ;
+  \item des valeurs \textbf{concrètes} (montants, dates, soldes) : pas de « un montant élevé » ;
+  \item aucune référence à l'interface (pas de « clique sur le bouton\ldots{} ») : on décrit le comportement, pas l'écran.
+\end{itemize}
+En écrivant les exemples, notez toutes les \textbf{questions} que vous poseriez au \textit{product owner} (ambiguïtés, cas non prévus).
+\end{exobox}
+
+\begin{exobox}{Analyser la faisabilité}
+Remplissez la grille d'analyse de faisabilité vue en cours pour \textbf{toutes} vos stories :
+
+\medskip
+{\small
+\begin{tabular}{@{}lllllll@{}}
+\toprule
+\textbf{Story} & \textbf{Technique} & \textbf{Points} & \textbf{Dépendances} & \textbf{Légal} & \textbf{Testable ?} & \textbf{Décision} \\
+\midrule
+\ldots & \ldots & \ldots & \ldots & \ldots & \ldots & \ldots \\
+\bottomrule
+\end{tabular}}
+\medskip
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item Estimez les stories en points (1, 2, 3, 5, 8, 13, ?) par un \textit{planning poker} à deux : chacun choisit en secret, puis vous comparez et discutez les écarts.
+  \item Pour chaque story, prenez une décision : \textbf{prête}, \textbf{\textit{spike}} d'abord, \textbf{reformuler}, \textbf{découper}, \textbf{abandonner}. Justifiez-la en une ou deux phrases. \textit{C'est la justification qui compte.}
+  \item Au moins deux besoins du compte rendu posent un \textbf{problème de faisabilité}. Lesquels, et de quelle nature (technique, légale, testabilité, règles contradictoires\ldots) ?
+  \item Pour la story qui nécessite un \textit{spike}, rédigez-le : la question précise à laquelle il répond, sa durée maximale, le résultat attendu.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Partie 2 --- Des scénarios exécutables avec Cucumber (45 min)}
+
+\subsection*{Mise en place}
+
+Le projet de départ contient déjà tout le nécessaire pour Cucumber :
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item les dépendances \texttt{cucumber-java}, \texttt{cucumber-junit-platform-engine} et \texttt{cucumber-spring} dans le \texttt{pom.xml} ;
+  \item le dossier \texttt{src/test/resources/features/}, où vous placerez vos fichiers \texttt{.feature} ;
+  \item le paquetage \texttt{fr.iutvannes.banque.acceptation} (dans \texttt{src/test/java}), où vous placerez vos \textit{step definitions}, et qui contient :
+  \begin{itemize}[itemsep=0pt]
+    \item la classe \texttt{CucumberTest}, qui lance les scénarios avec JUnit ;
+    \item la classe \texttt{ContexteBanque}, qui crée un \texttt{VirementService} prêt à l'emploi, avec des comptes gardés en mémoire (pas de base de données) et une horloge que l'on peut fixer. Ses méthodes :
+    \begin{itemize}[itemsep=0pt]
+      \item \texttt{ajouterCompte(compte)}, \texttt{compte(numero)}, \texttt{virementService()} ;
+      \item \texttt{fixerDate(date)} ; \texttt{notifications()} (messages envoyés) ;
+      \item \texttt{setDerniereErreur(e)}, \texttt{getDerniereErreur()} ;
+    \end{itemize}
+    \item la classe \texttt{ConfigurationCucumber}, qui indique à Cucumber de créer les classes d'étapes avec Spring (vous n'avez pas à la modifier).
+  \end{itemize}
+\end{itemize}
+
+\begin{lstlisting}[language=Java]
+@Suite(failIfNoTests = false)   // aucun scenario au depart : la suite vide ne doit pas echouer
+@IncludeEngines("cucumber")
+@SelectPackages("features")
+@ConfigurationParameter(key = GLUE_PROPERTY_NAME, value = "fr.iutvannes.banque.acceptation")
+@ConfigurationParameter(key = PLUGIN_PROPERTY_NAME, value = "pretty, html:target/cucumber.html")
+public class CucumberTest {
+}
+\end{lstlisting}
+
+\begin{infobox}[Partager l'état entre les étapes]
+Cucumber crée une nouvelle instance de chaque classe d'étapes \textbf{pour chaque scénario} : les scénarios sont donc indépendants. Pour que plusieurs classes d'étapes partagent les mêmes comptes, recevez \texttt{ContexteBanque} dans leur constructeur : il est déclaré \texttt{@ScenarioScope}, et \texttt{cucumber-spring} injecte la même instance dans toutes les classes d'étapes, le temps d'un scénario.
+\end{infobox}
+
+\begin{exobox}{Automatiser le virement}
+Le virement entre deux comptes existe déjà dans l'application : \texttt{VirementService.virer(numeroSource, numeroCible, montant)}. On commence par écrire ses tests d'acceptation.
+\begin{enumerate}[leftmargin=1.4em]
+  \item Créez \texttt{src/test/resources/features/virement.feature} avec les scénarios suivants (en français, les nombres s'écrivent avec une virgule) :
+\begin{lstlisting}[language=Gherkin]
+# language: fr
+(*@\gk{Fonctionnalité:}@*) Virement entre deux comptes
+
+  (*@\gk{Scénario:}@*) virement accepté
+    (*@\gk{Étant donné}@*) un compte "FR76-001" avec un solde de 500,00 €
+    Et un compte "FR76-002" avec un solde de 100,00 €
+    Quand le client vire 200,00 € de "FR76-001" vers "FR76-002"
+    Alors le solde de "FR76-001" est de 300,00 €
+    Et le solde de "FR76-002" est de 300,00 €
+\end{lstlisting}
+  \item Lancez \texttt{./mvnw test}. Cucumber signale des étapes \textbf{non définies} et vous propose le squelette des méthodes. Créez la classe \texttt{VirementSteps} et complétez ces méthodes (expressions \texttt{\{string\}} et \texttt{\{bigdecimal\}}), jusqu'à ce que le scénario passe.
+  \item Ajoutez un scénario \textbf{virement refusé} (solde insuffisant) : le virement est refusé et \textbf{aucun} des deux soldes ne change. L'étape « Quand » ne doit pas faire échouer le scénario quand une exception est levée : conservez-la dans \texttt{ContexteBanque} et vérifiez-la dans une étape « Alors le virement est refusé ».
+  \item Ajoutez un \textbf{Plan du scénario} avec un tableau d'\textbf{Exemples} pour les valeurs limites du solde (débit qui laisse exactement 0, débit qui dépasse de 0,01\,\euro{}). Réutilisez vos étapes : vous ne devriez écrire aucune nouvelle méthode.
+  \item Ouvrez le rapport \texttt{target/cucumber.html}. Un \textit{product owner} pourrait-il le lire ?
+\end{enumerate}
+\end{exobox}
+
+\begin{exobox}{ATDD : développer le virement programmé}
+On développe maintenant la story « virement programmé unique » issue de B1, \textbf{en partant des scénarios}. Les virements mensuels et l'annulation ne sont pas demandés.
+\begin{enumerate}[leftmargin=1.4em]
+  \item Recopiez dans \texttt{src/test/resources/features/virement\_programme.feature} vos scénarios de la partie 1 pour cette story, en les adaptant si besoin. La date du jour est fixée par une étape :
+\begin{lstlisting}[language=Gherkin]
+    (*@\gk{Étant donné}@*) que nous sommes le 01/03/2027
+\end{lstlisting}
+  Pour transformer \texttt{01/03/2027} en \texttt{LocalDate}, déclarez un type de paramètre personnalisé (méthode annotée \texttt{@ParameterType}) ; l'étape appelle ensuite \texttt{ContexteBanque.fixerDate(...)}.
+  \item Lancez les tests : vos scénarios sont \textbf{rouges} (étapes non définies, puis code absent). C'est normal : c'est le point de départ.
+  \item Écrivez les étapes, puis le code minimal pour les faire passer, par exemple :
+  \begin{itemize}[itemsep=0pt]
+    \item une classe \texttt{VirementProgramme} (source, cible, montant, date d'exécution, statut) ;
+    \item \texttt{VirementService.programmer(source, cible, montant, date)}, qui refuse une date passée ;
+    \item \texttt{VirementService.executerVirementsDuJour()}, qui exécute les virements dont la date est aujourd'hui (selon l'horloge) et marque comme \textbf{rejetés} ceux dont le solde est insuffisant.
+  \end{itemize}
+  \item Arrêtez-vous dès que tous les scénarios sont verts : le scénario dit quand la story est terminée.
+  \item Relancez \textbf{toute} la suite (\texttt{./mvnw test}) : vos tests JUnit du TP1 et tous les scénarios doivent passer.
+\end{enumerate}
+\end{exobox}
+
+\begin{infobox}[Pour aller plus loin (facultatif)]
+Ajoutez les virements programmés mensuels : que se passe-t-il pour un virement programmé le 31 du mois, en février ? Écrivez d'abord le scénario, puis demandez-vous si c'est à vous de décider de la réponse.
+\end{infobox}
+
+% ================================================================
+\section{Rendu}
+
+\begin{infobox}[À rendre avant \rdatelimite]
+Sur le dépôt du binôme, un \textbf{tag} \texttt{tp2} pointant sur le commit rendu :
+\begin{codebox}
+git tag tp2
+git push origin tp2
+\end{codebox}
+Le commit doit contenir :
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item \texttt{docs/tp2.md} : stories, analyse INVEST, critères d'acceptation de B1 et B4, questions au \textit{product owner}, grille de faisabilité avec décisions justifiées, \textit{spike} ;
+  \item \texttt{virement.feature} et \texttt{virement\_programme.feature} ;
+  \item les classes d'étapes et le code du virement programmé ;
+  \item une suite complète qui passe : \texttt{./mvnw test}.
+\end{itemize}
+\end{infobox}
+
+\end{document}

@@ -1,0 +1,459 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\input{../../latex/common/r402-slides-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{img/}}
+
+\title{Testabilité et doublures de test}
+\author[C. Tibermacine]{Chouki Tibermacine}
+\date{}
+
+\lstdefinestyle{sortie}{language={}, basicstyle=\lstcode\scriptsize, keywordstyle={}, commentstyle={}, stringstyle={}}
+
+\tikzset{
+  comp/.style={rectangle, rounded corners=2pt, draw=qaaccent, thick, fill=qapanel, text=qatext,
+    minimum height=0.6cm, minimum width=2.6cm, align=center, font=\scriptsize},
+  dep/.style={rectangle, rounded corners=2pt, draw=qamuted, thick, fill=qapanelalt, text=qatext,
+    minimum height=0.55cm, minimum width=2.4cm, align=center, font=\scriptsize},
+  dbl/.style={rectangle, rounded corners=2pt, draw=qaaccent2, thick, dashed, fill=qapanelalt, text=qatext,
+    minimum height=0.55cm, minimum width=2.4cm, align=center, font=\scriptsize},
+  arr/.style={-Latex, qamuted, thick}
+}
+
+\begin{document}
+
+\rtitleslide{3}{Testabilité et doublures de test}
+
+\begin{frame}{Le problème}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{center}
+      \begin{tikzpicture}
+        \node[comp] (svc) at (0,0) {\texttt{VirementService}};
+        \node[dep] (repo)  at (-1.75, 1.6)  {\texttt{CompteRepository}\\{\tiny\color{qamuted}PostgreSQL}};
+        \node[dep] (taux)  at ( 1.75, 1.6)  {\texttt{TauxChangeClient}\\{\tiny\color{qamuted}API HTTP externe}};
+        \node[dep] (notif) at (-1.75,-1.6)  {\texttt{NotificationService}\\{\tiny\color{qamuted}envoie de vrais SMS}};
+        \node[dep] (clock) at ( 1.75,-1.6)  {\texttt{Clock}\\{\tiny\color{qamuted}la date change}};
+        \draw[arr] ([xshift=-0.6cm]svc.north) -- (repo.south);
+        \draw[arr] ([xshift=0.6cm]svc.north)  -- (taux.south);
+        \draw[arr] ([xshift=-0.6cm]svc.south) -- (notif.north);
+        \draw[arr] ([xshift=0.6cm]svc.south)  -- (clock.north);
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      On veut tester \texttt{VirementService.virer} \textbf{unitairement}. Mais avec ses vraies dépendances, le test :
+      \begin{itemize}
+        \item a besoin d'une base démarrée et remplie \alert{(lent, pas F)}
+        \item dépend du taux du jour et du réseau \alert{(pas R)}
+        \item envoie un vrai SMS à chaque exécution
+        \item ne peut pas provoquer une panne de l'API
+        \item donne un résultat différent le dimanche
+      \end{itemize}
+      \vspace{1mm}
+      $\Rightarrow$ remplacer les dépendances par des \textbf{doublures}, comme au cinéma
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Écrire du code testable}
+
+\begin{frame}[fragile]{Un code difficile à tester}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+public class VirementService {
+    private final CompteRepository comptes = new JpaCompteRepository();        // vraie base
+    private final TauxChangeClient taux = new HttpTauxChangeClient("https://...");
+
+    public void virer(String numSource, String numCible, BigDecimal montant) {
+        if (LocalDate.now().getDayOfWeek() == DayOfWeek.SUNDAY) {               // date réelle
+            throw new VirementImpossibleException("pas de virement le dimanche");
+        }
+        // ... débit, crédit, conversion avec taux.taux(...)
+        new SmsNotifier().envoyer(numSource, "Virement effectué");              // vrai SMS
+    }
+}
+\end{lstlisting}
+  \begin{itemize}
+    \item Chaque \texttt{new} et chaque \texttt{LocalDate.now()} est une dépendance \textbf{cachée} et \textbf{figée}
+    \item Le test n'a aucun moyen de les remplacer : il subit la base, le réseau et le calendrier
+    \item Ce n'est pas un problème de test : c'est un problème de \textbf{conception} (couplage fort)
+  \end{itemize}
+\end{frame}
+
+\rdemo{1}{Le code en dur ne se teste pas}{%
+  \item On lance un test de \texttt{VirementServiceLegacy}\ldots
+  \item \ldots{} il échoue : \textit{connexion refusée à PostgreSQL}
+  \item L'échec n'a \textbf{rien à voir} avec la logique du virement
+  \item Et si la base était démarrée ? API de change injoignable, \textbf{vrai SMS} envoyé, échec le dimanche
+}{\texttt{legacy/VirementServiceLegacy}\\[1mm]\texttt{demo1/VirementServiceLegacyTest}}
+
+\begin{frame}[fragile]{Le même code, testable}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+public class VirementService {
+    private final CompteRepository comptes;
+    private final TauxChangeClient taux;
+    private final NotificationService notifications;
+    private final Clock horloge;
+    public VirementService(CompteRepository comptes, TauxChangeClient taux,
+                           NotificationService notifications, Clock horloge) {
+        this.comptes = comptes;  this.taux = taux;
+        this.notifications = notifications;  this.horloge = horloge;
+    }
+    public void virer(String numSource, String numCible, BigDecimal montant) {
+        if (LocalDate.now(horloge).getDayOfWeek() == SUNDAY) { ... }
+        notifications.notifier(numSource, "Virement effectué");
+    }
+}
+\end{lstlisting}
+  \small
+  \textbf{Injection par constructeur}, dépendances typées par des \textbf{interfaces}, horloge en paramètre (\texttt{Clock}).
+  En production, Spring injecte les vraies implémentations ; en test, \textbf{vous} injectez des doublures.
+\end{frame}
+
+\begin{frame}{Vous l'avez déjà fait : le patron Repository}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[node distance=0.5cm]
+        \node[comp] (svc) {\texttt{VirementService}};
+        \node[comp, below=of svc, draw=qaaccent2] (itf) {\guillemotleft interface\guillemotright\\\texttt{CompteRepository}};
+        \node[dep, below left=0.7cm and -0.8cm of itf] (jpa) {implémentation\\Spring Data / JPA};
+        \node[dbl, below right=0.7cm and -0.8cm of itf] (mem) {implémentation\\en mémoire (test)};
+        \draw[arr] (svc) -- node[right, font=\tiny, text=qamuted] {dépend de} (itf);
+        \draw[arr, dashed] (jpa) -- (itf);
+        \draw[arr, dashed] (mem) -- (itf);
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{itemize}
+        \item En R3.07, le Repository cachait JPA derrière une interface « métier »
+        \item Le service ne connaît que l'\textbf{interface} : il ne sait pas s'il parle à PostgreSQL ou à une \texttt{HashMap}
+        \item C'est exactement ce qui le rend testable
+        \item Règle générale : dépendre d'\textbf{abstractions}, pas de classes concrètes (principe d'inversion des dépendances)
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Les doublures de test}
+
+\begin{frame}{Cinq sortes de doublures (Meszaros, 2007)}
+  \footnotesize
+  \begin{datacard}
+    \begin{tabular}{@{}p{1.2cm}p{4.9cm}p{6.0cm}@{}}
+      \toprule
+      \textbf{Nom} & \textbf{Rôle} & \textbf{Exemple dans la banque} \\
+      \midrule
+      \textbf{\color{qaaccent}Dummy} & passé en paramètre mais jamais utilisé & un \texttt{NotificationService} \texttt{null} dans un test où aucune notification ne part \\[1mm]
+      \textbf{\color{qaaccent}Stub} & renvoie des réponses \textbf{préparées} & un \texttt{TauxChangeClient} qui renvoie toujours 1,10 \\[1mm]
+      \textbf{\color{qaaccent}Fake} & implémentation \textbf{simplifiée} mais qui marche & un \texttt{CompteRepository} dans une \texttt{HashMap} (le \texttt{ContexteBanque} du TP2) \\[1mm]
+      \textbf{\color{qaaccent}Spy} & \textbf{enregistre} les appels reçus, pour les vérifier après & un \texttt{NotificationService} qui garde la liste des messages « envoyés » \\[1mm]
+      \textbf{\color{qaaccent}Mock} & programmé avec des \textbf{attentes} sur les appels ; le test échoue si elles ne sont pas respectées & « \texttt{notifier} doit être appelé une fois avec \texttt{FR76-001} » \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{1mm}
+  \source{Gerard Meszaros, \textit{xUnit Test Patterns}, 2007. Dans le langage courant, on dit souvent « mock » pour toutes les doublures.}
+\end{frame}
+
+\begin{frame}[fragile]{Des doublures écrites à la main}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+// Stub : toujours la même réponse (TauxChangeClient n'a qu'une méthode : une lambda suffit)
+TauxChangeClient taux = (de, vers) -> new BigDecimal("1.10");
+
+// Fake : une vraie logique, mais sans base de données
+class CompteRepositoryEnMemoire implements CompteRepository {
+    private final Map<String, Compte> comptes = new HashMap<>();
+
+    public Optional<Compte> findByNumero(String numero) {
+        return Optional.ofNullable(comptes.get(numero));
+    }
+    public Compte save(Compte compte) {
+        comptes.put(compte.getNumero(), compte);
+        return compte;
+    }
+}
+\end{lstlisting}
+  \small
+  \begin{itemize}
+    \item Un spy à la main : une implémentation de \texttt{NotificationService} qui ajoute chaque message reçu dans une liste, qu'on vérifie à la fin du test
+    \item Simple pour de petites interfaces ; fastidieux pour 10 méthodes et 30 tests : on utilise une bibliothèque
+  \end{itemize}
+\end{frame}
+
+\rdemo{2}{Stub, fake et spy faits main}{%
+  \item Un fake (\texttt{HashMap}), un spy (liste de messages), un stub (une lambda)
+  \item 4 tests verts en quelques millisecondes, sans base ni réseau
+  \item Tester « le dimanche » un lundi matin, grâce à \texttt{Clock}
+  \item Piège du fuseau : \texttt{2027-03-06T23:30Z}, samedi en UTC\ldots{} dimanche à Paris
+}{\texttt{demo2/CompteRepositoryEnMemoire}\\\texttt{demo2/NotificationsEspion}\\\texttt{demo2/DoubluresALaMainTest}}
+
+\begin{frame}{Vérifier un état ou un comportement ?}
+  \small
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Vérification d'état}
+        \begin{itemize}
+          \item Après l'action, on regarde le \textbf{résultat} : soldes, valeur renvoyée
+          \item Utilise des vrais objets, des stubs et des fakes
+          \item Résiste bien aux changements d'implémentation
+          \item École « classique » (Detroit ou Chicago, Kent Beck)
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Vérification de comportement}
+        \begin{itemize}
+          \item On vérifie que les bons \textbf{appels} ont eu lieu, avec les bons paramètres
+          \item Utilise des mocks et des spies
+          \item Indispensable quand l'effet est \textbf{à l'extérieur} : un SMS envoyé n'a pas d'« état » à lire
+          \item École « mockiste » (Londres, Freeman et Pryce)
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{exampleblock}{Une règle simple}
+    \textbf{Simuler les requêtes} (ce qui renvoie une valeur : \texttt{findByNumero}, \texttt{taux}) avec des stubs ; \textbf{vérifier les commandes} (ce qui produit un effet : \texttt{notifier}, \texttt{save}).
+  \end{exampleblock}
+\end{frame}
+
+\begin{frame}{Quelle doublure choisir ?}
+  \small
+  \begin{datacard}
+    \begin{tabular}{@{}p{6.4cm}p{6.2cm}@{}}
+      \toprule
+      \textbf{Situation} & \textbf{Doublure} \\
+      \midrule
+      Le paramètre est obligatoire mais ne sert pas dans ce test & \textbf{dummy} (souvent \texttt{null} ou un mock jamais programmé) \\[0.5mm]
+      J'ai besoin qu'une requête renvoie une valeur précise, ou échoue & \textbf{stub} (\texttt{when ... thenReturn / thenThrow}) \\[0.5mm]
+      Le collaborateur a un vrai comportement (stocker puis relire) utilisé par plusieurs tests & \textbf{fake} (en mémoire) \\[0.5mm]
+      Je dois vérifier qu'un effet extérieur a eu lieu (SMS, e-mail, enregistrement) & \textbf{mock} ou \textbf{spy} (\texttt{verify}) \\[0.5mm]
+      Le collaborateur est un objet du domaine (\texttt{Compte}) ou une valeur (\texttt{BigDecimal}) & \alert{aucune} : on utilise le vrai \\[0.5mm]
+      Je dois vérifier que la vraie base ou la vraie API marche & \alert{aucune} : test d'\textbf{intégration} (CM4) \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+\end{frame}
+
+% ================================================================
+\section{Mockito}
+
+\begin{frame}[fragile]{Mettre en place Mockito}
+  \begin{columns}[T]
+    \begin{column}{0.6\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@ExtendWith(MockitoExtension.class)
+class VirementServiceTest {
+
+    @Mock CompteRepository comptes;
+    @Mock TauxChangeClient taux;
+    @Mock NotificationService notifications;
+
+    Clock horloge = Clock.fixed(
+        Instant.parse("2027-03-01T10:00:00Z"), ZoneOffset.UTC);
+
+    VirementService service;
+
+    @BeforeEach
+    void init() {
+        service = new VirementService(comptes, taux,
+                                      notifications, horloge);
+    }
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.37\textwidth}
+      \small
+      \begin{itemize}
+        \item \texttt{@Mock} : Mockito crée une implémentation de l'interface
+        \item Par défaut, ses méthodes ne font rien et renvoient une valeur « vide » (\texttt{null}, 0, \texttt{Optional.empty()}, liste vide)
+        \item \texttt{Clock.fixed} : toujours le lundi 1\textsuperscript{er} mars 2027
+        \item \texttt{@InjectMocks} existe, mais n'injecte que des mocks (pas la \texttt{Clock}) : construire le service soi-même est plus clair
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Préparer les réponses : \texttt{when ... thenReturn}}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@Test
+void virer_comptesEnEurosEtEnDollars_convertitLeMontant() {
+    Compte source = new Compte("FR76-001", Devise.EUR, eur("500.00"));
+    Compte cible  = new Compte("US-042",   Devise.USD, eur("0.00"));
+    when(comptes.findByNumero("FR76-001")).thenReturn(Optional.of(source));   // Arrange : stubs
+    when(comptes.findByNumero("US-042")).thenReturn(Optional.of(cible));
+    when(taux.taux(Devise.EUR, Devise.USD)).thenReturn(new BigDecimal("1.10"));
+
+    service.virer("FR76-001", "US-042", eur("100.00"));                       // Act
+
+    assertThat(source.getSolde()).isEqualByComparingTo("400.00");             // Assert : état
+    assertThat(cible.getSolde()).isEqualByComparingTo("110.00");
+}
+\end{lstlisting}
+  \begin{itemize}
+    \item On ne programme que ce dont \textbf{ce} test a besoin ; avec \texttt{MockitoExtension}, un stub inutilisé fait échouer le test (\texttt{UnnecessaryStubbingException})
+    \item \texttt{thenReturn(a, b, c)} : réponses successives ; \texttt{thenAnswer(...)} : réponse calculée
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Simuler une panne : \texttt{thenThrow}}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@Test
+void virer_apiDeChangeIndisponible_refuseSansRienModifier() {
+    Compte source = new Compte("FR76-001", Devise.EUR, eur("500.00"));
+    Compte cible  = new Compte("US-042",   Devise.USD, eur("0.00"));
+    when(comptes.findByNumero("FR76-001")).thenReturn(Optional.of(source));
+    when(comptes.findByNumero("US-042")).thenReturn(Optional.of(cible));
+    when(taux.taux(any(), any())).thenThrow(new TauxIndisponibleException("délai dépassé"));
+
+    assertThatThrownBy(() -> service.virer("FR76-001", "US-042", eur("100.00")))
+        .isInstanceOf(VirementImpossibleException.class);
+
+    assertThat(source.getSolde()).isEqualByComparingTo("500.00");   // rien n'a bougé
+    verify(comptes, never()).save(any());                            // rien n'a été enregistré
+    verifyNoInteractions(notifications);                              // personne n'a été prévenu
+}
+\end{lstlisting}
+  \begin{itemize}
+    \item Les pannes (réseau coupé, délai dépassé, service en maintenance) sont \textbf{impossibles à provoquer} de façon fiable avec la vraie API
+    \item Avec une doublure, c'est une ligne : les cas d'erreur deviennent faciles à tester
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Vérifier les appels : \texttt{verify}}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+service.virer("FR76-001", "FR76-002", eur("1500.00"));
+
+verify(notifications).notifier(eq("FR76-001"), anyString());
+verify(comptes, times(2)).save(any(Compte.class));
+verify(taux, never()).taux(any(), any());  // même devise
+\end{lstlisting}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+// Capturer un argument pour l'examiner
+ArgumentCaptor<String> message =
+    ArgumentCaptor.forClass(String.class);
+verify(notifications).notifier(eq("FR76-001"),
+                               message.capture());
+assertThat(message.getValue()).contains("1500.00 €");
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}
+        \item \texttt{verify(mock)} : appelé exactement une fois avec ces arguments
+        \item \texttt{times(n)}, \texttt{never()}, \texttt{atLeastOnce()}, \texttt{verifyNoInteractions}
+        \item \textbf{Matchers} : \texttt{any()}, \texttt{anyString()}, \texttt{eq(...)}, \texttt{argThat(...)}
+          \begin{itemize}
+            \item si un argument utilise un matcher, \alert{tous} doivent en utiliser un (d'où \texttt{eq("FR76-001")})
+          \end{itemize}
+        \item \texttt{ArgumentCaptor} : récupérer l'argument réellement passé pour faire des assertions précises
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\rdemo{3}{Mockito en action}{%
+  \item Que renvoie un mock qu'on n'a pas programmé ?
+  \item Conversion avec un taux à 4 décimales : l'arrondi est-il bon ?
+  \item Une panne d'API en une ligne (\texttt{thenThrow})
+  \item \texttt{verify} et \texttt{ArgumentCaptor} : on casse le message attendu pour lire le diff
+  \item Valeur limite 1\,000 \euro{} : on introduit un bug \texttt{>=}, le test le voit
+}{\texttt{demo3/VirementServiceMockitoTest}\\[1mm]\texttt{service/VirementService}}
+
+\begin{frame}[fragile]{Espionner un vrai objet : \texttt{@Spy}}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+Compte source = spy(new Compte("FR76-001", eur("500.00")));
+when(comptes.findByNumero("FR76-001"))
+    .thenReturn(Optional.of(source));
+// ...
+service.virer("FR76-001", "FR76-002", eur("100.00"));
+
+verify(source).debiter(eur("100.00"));   // vrai débit exécuté
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}
+        \item Un \textbf{spy} Mockito enveloppe un \textbf{vrai} objet : les vraies méthodes s'exécutent, mais les appels sont enregistrés
+        \item On peut aussi remplacer une seule méthode : \texttt{doReturn(x).when(spy).methode()}
+        \item \alert{À utiliser rarement} : si on a besoin d'espionner un objet du domaine, c'est souvent que le test vérifie l'implémentation plutôt que le résultat
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\rdemo{4}{Lire les erreurs de Mockito}{%
+  \item Quatre tests rouges, quatre erreurs que vous rencontrerez en TP :
+    \begin{itemize}
+      \item \texttt{UnnecessaryStubbingException}
+      \item \texttt{InvalidUseOfMatchersException}
+      \item un stub oublié\ldots{} et une exception déroutante
+      \item \texttt{PotentialStubbingProblem}
+    \end{itemize}
+  \item Le message de Mockito contient presque toujours la solution
+}{\texttt{demo4/PiegesMockitoTest}}
+
+\begin{frame}{Les pièges du mocking}
+  \footnotesize
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{alertblock}{Tout simuler}
+        \begin{itemize}
+          \item Simuler \texttt{Compte}, \texttt{BigDecimal}, une \texttt{List}\ldots{} : le test ne vérifie plus que ses propres réglages
+          \item On simule les \textbf{frontières} (base, réseau, horloge, e-mail), pas les objets du domaine
+        \end{itemize}
+      \end{alertblock}
+      \begin{alertblock}{Simuler ce qu'on ne possède pas}
+        \begin{itemize}
+          \item Simuler le client HTTP d'une API : on reproduit \textbf{sa} documentation, peut-être de travers
+          \item Mieux : l'envelopper dans \textbf{notre} interface (\texttt{TauxChangeClient}), simuler celle-ci, tester l'adaptateur réel en intégration (CM4)
+        \end{itemize}
+      \end{alertblock}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{alertblock}{Tests couplés à l'implémentation}
+        \begin{itemize}
+          \item Un test qui vérifie chaque appel interne casse au moindre refactoring, même si le comportement est inchangé
+          \item Vérifier ce qui \textbf{compte} pour l'extérieur : le résultat, et les effets visibles (notification, enregistrement)
+        \end{itemize}
+      \end{alertblock}
+      \begin{alertblock}{Des mocks qui mentent}
+        \begin{itemize}
+          \item Le mock renvoie \texttt{Optional.of(...)} alors que la vraie base renverrait vide : test vert, production rouge
+          \item Les doublures ne remplacent pas les \textbf{tests d'intégration} : elles les complètent
+        \end{itemize}
+      \end{alertblock}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\rdemo{5}{Un test trop couplé}{%
+  \item Refactoring : deux \texttt{save} remplacés par un \texttt{saveAll}
+  \item Le test qui comptait les \texttt{save} passe au rouge\ldots
+  \item \ldots{} celui qui vérifie l'état enregistré (avec un fake) reste vert
+  \item Le comportement a-t-il changé pour le client ? Qui avait tort ?
+}{\texttt{service/VirementService}\\\texttt{demo3/\ldots\#virer\_enregistre\-LesDeuxComptes}\\\texttt{demo5/VirementServiceRobusteTest}}
+
+\begin{frame}{À retenir}
+  \small
+  \begin{itemize}
+    \item Un code testable reçoit ses dépendances (\textbf{injection par constructeur}) et dépend d'\textbf{interfaces} ; pas de \texttt{new} ni de \texttt{LocalDate.now()} cachés
+    \item Cinq doublures : \textbf{dummy}, \textbf{stub}, \textbf{fake}, \textbf{spy}, \textbf{mock}
+    \item Simuler les requêtes, vérifier les commandes ; préférer la vérification d'état quand c'est possible
+    \item Mockito : \texttt{@Mock}, \texttt{when(...).thenReturn(...)}, \texttt{thenThrow}, \texttt{verify}, \texttt{never()}, \texttt{ArgumentCaptor}, \texttt{spy}
+    \item Simuler les \textbf{frontières} du système, pas le domaine ; envelopper les API externes dans nos propres interfaces
+    \item Les doublures rendent les tests rapides et reproductibles, et les pannes faciles à provoquer ; elles ne prouvent pas que l'intégration marche (CM4)
+  \end{itemize}
+  \vspace{1mm}
+  \begin{exampleblock}{TP3}
+    Tester \texttt{VirementService} avec Mockito, puis rendre testable une classe qui ne l'est pas. \alert{Quiz 1} en fin de semaine, lors d'une séance à part (CM1 à CM3).
+  \end{exampleblock}
+\end{frame}
+
+\rquestionslide
+
+\end{document}

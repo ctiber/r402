@@ -1,0 +1,524 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\input{../../latex/common/r402-slides-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{img/}}
+
+\title{Tests d'intégration avec une base de données}
+\author[C. Tibermacine]{Chouki Tibermacine}
+\date{}
+
+\lstdefinestyle{sortie}{language={}, basicstyle=\lstcode\scriptsize, keywordstyle={}, commentstyle={}, stringstyle={}}
+
+\tikzset{
+  comp/.style={rectangle, rounded corners=2pt, draw=qaaccent, thick, fill=qapanel, text=qatext,
+    minimum height=0.55cm, minimum width=2.5cm, align=center, font=\scriptsize},
+  dep/.style={rectangle, rounded corners=2pt, draw=qamuted, thick, fill=qapanelalt, text=qatext,
+    minimum height=0.55cm, minimum width=2.5cm, align=center, font=\scriptsize},
+  dbl/.style={rectangle, rounded corners=2pt, draw=qaaccent2, thick, dashed, fill=qapanelalt, text=qatext,
+    minimum height=0.55cm, minimum width=2.5cm, align=center, font=\scriptsize},
+  arr/.style={-Latex, qamuted, thick}
+}
+
+\begin{document}
+
+\rtitleslide{4}{Tests d'intégration avec une base de données}
+
+\begin{frame}{Où en est-on ?}
+  \begin{columns}[c]
+    \begin{column}{0.48\textwidth}
+      \begin{itemize}
+        \item CM1 et CM3 : des tests \textbf{unitaires}, rapides, isolés par des doublures
+        \item CM2 : des tests d'\textbf{acceptation}, écrits avec le client
+        \item Mais avec des doublures, on a seulement \textbf{supposé} que la base, le SQL et la configuration se comportent comme prévu
+        \item Aujourd'hui : vérifier que les morceaux \textbf{s'assemblent} vraiment
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[x=0.8cm, y=1cm]
+        \fill[qaaccent!35!qapanel] (0,0) -- (6,0) -- (4.6,1.4) -- (1.4,1.4) -- cycle;
+        \fill[qaaccent2] (1.4,1.4) -- (4.6,1.4) -- (3.7,2.3) -- (2.3,2.3) -- cycle;
+        \fill[qaaccent!35!qapanel] (2.3,2.3) -- (3.7,2.3) -- (3,3.0) -- cycle;
+        \node[font=\small\bfseries, text=qatext] at (3,0.7) {Unitaires};
+        \node[font=\scriptsize\bfseries, text=qabg] at (3,1.85) {Intégration};
+        \node[font=\tiny\bfseries, text=qatext] at (3,2.55) {E2E};
+        \draw[arr, qaaccent2] (6.6,1.85) -- (4.4,1.85);
+        \node[font=\scriptsize, text=qaaccent2, anchor=west] at (6.6,1.85) {CM4};
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Qu'est-ce qu'on intègre ?}
+
+\begin{frame}{Ce que les tests unitaires ne voient pas}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Côté base de données}
+        \begin{itemize}
+          \item une requête SQL ou JPQL mal écrite
+          \item un mapping JPA faux (nom de colonne, type, relation)
+          \item une contrainte (\texttt{UNIQUE}, \texttt{NOT NULL}, clé étrangère) qui rejette les données
+          \item une transaction qui laisse des données incohérentes
+          \item un trigger ou une procédure stockée (R3.07)
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Côté application}
+        \begin{itemize}
+          \item une configuration Spring incomplète (un bean manquant)
+          \item une URL ou un format JSON mal défini dans un contrôleur
+          \item une sérialisation de \texttt{BigDecimal} ou de date inattendue
+          \item un mock qui renvoie ce que la vraie base ne renverrait jamais
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{center}
+    Tous ces bugs passent les tests unitaires\ldots{} et apparaissent au premier démarrage réel.
+  \end{center}
+\end{frame}
+
+\begin{frame}{Qu'est-ce qu'un test d'intégration ?}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[node distance=0.35cm]
+        \node[comp] (ctrl) {Contrôleur REST};
+        \node[comp, below=of ctrl] (svc) {Service};
+        \node[comp, below=of svc] (repo) {Repository};
+        \node[comp, below=of repo, draw=qaaccent2] (db) {PostgreSQL};
+        \node[dbl, right=0.7cm of svc] (api) {API de change\\{\tiny doublure}};
+        \draw[arr] (ctrl) -- (svc);
+        \draw[arr] (svc) -- (repo);
+        \draw[arr] (repo) -- (db);
+        \draw[arr] (svc) -- (api);
+        \draw[qaaccent2, thick, rounded corners, dashed] ([xshift=-0.25cm, yshift=0.2cm]ctrl.north west) rectangle ([xshift=0.25cm, yshift=-0.2cm]db.south east);
+        \node[font=\tiny, text=qaaccent2, anchor=north] at ([yshift=-0.25cm]db.south) {composants réels, testés ensemble};
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{itemize}
+        \item Plusieurs composants \textbf{réels} testés \textbf{ensemble}, à travers leurs interfaces
+        \item Les plus fréquents :
+          \begin{itemize}
+            \item code + base de données
+            \item code + API externe (adaptateur HTTP)
+            \item toutes les couches de l'application
+          \end{itemize}
+        \item On garde des doublures pour ce qui est \textbf{hors} du périmètre testé (ici : l'API de change)
+        \item Plus lents que les tests unitaires (secondes, pas millisecondes), donc moins nombreux
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Stratégies d'intégration}
+  \begin{columns}[T]
+    \begin{column}{0.32\textwidth}
+      \begin{block}{Big bang}
+        \small
+        Tout assembler d'un coup, puis tester.
+        \begin{itemize}
+          \item simple à organiser
+          \item \alert{si ça échoue, où est le problème ?}
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{block}{Ascendante}
+        \small
+        Des couches basses vers les hautes : repository + base, puis service, puis contrôleur.
+        \begin{itemize}
+          \item chaque étape repose sur une couche déjà vérifiée
+          \item l'interface utilisateur arrive en dernier
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{block}{Descendante}
+        \small
+        Des couches hautes vers les basses, en remplaçant le bas par des doublures.
+        \begin{itemize}
+          \item on montre tôt un parcours complet
+          \item beaucoup de doublures à écrire
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{itemize}
+    \item En pratique, avec une intégration continue, on intègre \textbf{petit à petit} et on teste à chaque étape : ni big bang, ni grand plan
+    \item Dans ce cours : ascendant (repository + base, puis toute l'application)
+  \end{itemize}
+\end{frame}
+
+% ================================================================
+\section{Quelle base de données pour les tests ?}
+
+\begin{frame}{Pourquoi pas la base de développement ?}
+  \begin{itemize}
+    \item Les tests \textbf{écrivent} : ils créent des comptes, font des virements, suppriment\ldots
+    \item Avec une base partagée :
+      \begin{itemize}
+        \item les tests dépendent des données déjà présentes (« ça passe chez moi »)
+        \item ils dépendent de l'\textbf{ordre} d'exécution : un test laisse des données qui en font échouer un autre
+        \item deux développeurs qui lancent les tests en même temps se gênent
+        \item vos données de développement sont modifiées ou effacées
+      \end{itemize}
+    \item Il faut une base \textbf{dédiée aux tests}, dans un état \textbf{connu} au début de chaque test
+    \item Et en CI (CM6), il n'y a pas de base de développement du tout
+  \end{itemize}
+  \vspace{2mm}
+  \begin{center}
+    Deux options : une base \textbf{en mémoire} (H2) ou une \textbf{vraie} base dans un conteneur (Testcontainers)
+  \end{center}
+\end{frame}
+
+\begin{frame}{Option 1 : H2, une base en mémoire}
+  \small
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{exampleblock}{Avantages}
+        \begin{itemize}
+          \item Base SQL écrite en Java, démarre en quelques millisecondes, dans le même processus
+          \item Rien à installer, pas de Docker
+          \item Utilisée par défaut par Spring dans un \texttt{@DataJpaTest} si elle est présente
+        \end{itemize}
+      \end{exampleblock}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{alertblock}{Mais ce n'est pas PostgreSQL}
+        \begin{itemize}
+          \item Pas de PL/pgSQL : vos procédures stockées et triggers de R3.07 ne s'exécutent pas
+          \item Types et fonctions propres à PostgreSQL absents ou imités (\texttt{jsonb}, fonctions de date\ldots)
+          \item Des comportements \textbf{différents sans erreur} : tri des \texttt{NULL}, comparaisons de chaînes\ldots
+          \item Un « mode de compatibilité PostgreSQL » existe, mais reste une imitation
+        \end{itemize}
+      \end{alertblock}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{center}
+    Un test vert sur H2 prouve que le code marche\ldots{} \textbf{sur H2}.
+  \end{center}
+\end{frame}
+
+\begin{frame}[fragile]{Un exemple : où vont les \texttt{NULL} ?}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+public interface CompteRepository
+        extends JpaRepository<Compte, Long> {
+    // plafondRetrait == null : pas de plafond
+    List<Compte> findAllByOrderByPlafondRetraitAsc();
+}
+\end{lstlisting}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+comptes.save(new Compte("FR76-001", ZERO, eur("500")));
+comptes.save(new Compte("FR76-002", ZERO, null));
+comptes.save(new Compte("FR76-003", ZERO, eur("100")));
+
+assertThat(comptes.findAllByOrderByPlafondRetraitAsc())
+    .extracting(Compte::getNumero)
+    .containsExactly("FR76-003", "FR76-001", "FR76-002");
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{datacard}
+        \small
+        \begin{tabular}{@{}ll@{}}
+          \textbf{PostgreSQL} & 003, 001, \alert{002} \\
+          \textbf{H2} & \alert{002}, 003, 001 \\
+        \end{tabular}
+      \end{datacard}
+      \begin{itemize}
+        \item Même code, même requête générée, \textbf{aucune erreur}
+        \item PostgreSQL range les \texttt{NULL} à la fin d'un tri croissant ; H2 au début
+        \item Un écran « comptes par plafond » serait faux en production alors que tous les tests passent
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Option 2 : Testcontainers, une vraie base jetable}
+  \begin{columns}[c]
+    \begin{column}{0.52\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[node distance=0.45cm]
+        \node[comp] (test) {Test JUnit};
+        \node[dep, below=of test] (tc) {Testcontainers};
+        \node[dep, below=of tc] (docker) {Docker};
+        \node[comp, right=1.2cm of docker, draw=qaaccent2] (pg) {conteneur\\\texttt{postgres:18}};
+        \draw[arr] (test) -- node[right, font=\tiny, text=qamuted] {1. démarre} (tc);
+        \draw[arr] (tc) -- (docker);
+        \draw[arr] (docker) -- node[above, font=\tiny, text=qamuted] {2. lance} (pg);
+        \draw[arr, qaaccent2] (test.east) -| node[pos=0.3, above, font=\tiny, text=qamuted] {3. JDBC (port aléatoire)} (pg.north);
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{itemize}
+        \item Bibliothèque Java qui démarre des conteneurs Docker \textbf{depuis le test}
+        \item La \textbf{même} version de PostgreSQL qu'en production
+        \item Neuve à chaque exécution, détruite à la fin : aucune donnée qui traîne
+        \item Port choisi au hasard : pas de conflit avec votre base de développement
+        \item Existe pour MySQL, MongoDB, Kafka, Redis, un faux serveur HTTP\ldots
+        \item Coût : Docker obligatoire, quelques secondes au démarrage
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Testcontainers avec Spring Boot}
+  \begin{columns}[T]
+    \begin{column}{0.62\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@DataJpaTest
+@AutoConfigureTestDatabase(replace = Replace.NONE)
+@Testcontainers
+class CompteRepositoryPostgresTest {
+  @Container @ServiceConnection
+  static PostgreSQLContainer postgres =
+      new PostgreSQLContainer("postgres:18-alpine");
+
+  @Autowired CompteRepository comptes;
+
+  @Test
+  void comptesADecouvert_requeteDerivee() {
+    comptes.save(new Compte("FR76-003", eur("-15.00")));
+    comptes.save(new Compte("FR76-002", eur("0.00")));
+
+    assertThat(comptes.findBySoldeLessThanOrderByNumero(ZERO))
+        .extracting(Compte::getNumero)
+        .containsExactly("FR76-003");
+  }
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.35\textwidth}
+      \small
+      \begin{itemize}
+        \item \texttt{@DataJpaTest} : seulement JPA et les repositories
+        \item \texttt{Replace.NONE} : ne pas remplacer la base par H2
+        \item \texttt{@Testcontainers} + \texttt{@Container} : démarrer et arrêter le conteneur
+        \item \texttt{@ServiceConnection} : Spring lit l'URL, l'utilisateur et le mot de passe du conteneur
+        \item \texttt{static} : un conteneur pour toute la classe
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Isoler les tests les uns des autres}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Le problème}
+        \begin{itemize}
+          \item Le test A crée le compte \texttt{FR76-001}
+          \item Le test B crée aussi \texttt{FR76-001}\ldots{} \alert{violation de contrainte \texttt{UNIQUE}}
+          \item B passe seul, échoue après A : le résultat dépend de l'\textbf{ordre} (le I de FIRST)
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Les solutions}
+        \begin{itemize}
+          \item \textbf{Rollback} : chaque test s'exécute dans une transaction annulée à la fin (par défaut avec \texttt{@DataJpaTest}, ou \texttt{@Transactional} sur la classe de test)
+          \item \textbf{Nettoyage} explicite (\texttt{deleteAll()} dans un \texttt{@BeforeEach}) quand le code testé gère lui-même ses transactions
+          \item Chaque test crée \textbf{ses} données : ne jamais compter sur celles d'un autre test
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Des jeux de données reproductibles}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@Test
+@Sql("/donnees/trois-comptes.sql")
+void virement_entreDeuxComptesExistants() { ... }
+\end{lstlisting}
+\begin{lstlisting}[language=SQL, basicstyle=\lstcode\scriptsize]
+-- src/test/resources/donnees/trois-comptes.sql
+INSERT INTO compte (id, numero, solde)
+VALUES (1, 'FR76-001', 500.00),
+       (2, 'FR76-002', 0.00),
+       (3, 'FR76-003', -15.00);
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}
+        \item \texttt{@Sql} : exécute un script avant le test (annulé avec lui par le rollback)
+        \item Ou créer les données en Java, avec des méthodes utilitaires (\texttt{unCompte().avecSolde("500")})
+        \item Données \textbf{minimales} : juste ce dont le test a besoin, lisibles dans le test
+        \item \alert{Jamais} de copie des données de production (RGPD, et elles changent)
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Tests d'intégration avec Spring}
+
+\begin{frame}{Charger plus ou moins d'application}
+  \footnotesize
+  \begin{datacard}
+    \begin{tabular}{@{}p{3.0cm}p{4.6cm}p{1.8cm}p{2.6cm}@{}}
+      \toprule
+      \textbf{Annotation} & \textbf{Ce qui est chargé} & \textbf{Durée} & \textbf{Pour tester} \\
+      \midrule
+      \textit{aucune} (JUnit seul) & rien de Spring & ms & domaine, services avec mocks \\[0.5mm]
+      \texttt{@DataJpaTest} & JPA, repositories, base de test & secondes & requêtes, mappings, contraintes \\[0.5mm]
+      \texttt{@WebMvcTest} & contrôleurs, JSON (services à simuler) & secondes & URL, statuts HTTP, JSON \\[0.5mm]
+      \texttt{@SpringBootTest} & \textbf{toute} l'application & plusieurs secondes & parcours complet \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{1mm}
+  \begin{itemize}\small
+    \item Les « tranches » (\textit{slices}) \texttt{@DataJpaTest} et \texttt{@WebMvcTest} ne chargent qu'une couche : plus rapides, échecs plus faciles à localiser
+    \item Spring \textbf{réutilise} le contexte entre classes de test qui ont la même configuration : un \texttt{@MockitoBean} différent dans chaque classe oblige à le recréer
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Toute l'application, sauf l'API externe}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@SpringBootTest @AutoConfigureMockMvc @Testcontainers @Transactional
+class CompteControllerIntegrationTest {
+    @Container @ServiceConnection
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:18-alpine");
+
+    @Autowired MockMvc mvc;                   // envoie de fausses requêtes HTTP, sans serveur
+    @Autowired CompteRepository comptes;
+    @MockitoBean TauxChangeClient taux;       // remplace le vrai bean dans le contexte Spring
+    @Test
+    void soldeEnDollars() throws Exception {
+        comptes.save(new Compte("FR76-001", eur("100.00")));
+        when(taux.taux("EUR", "USD")).thenReturn(eur("1.10"));
+        mvc.perform(get("/api/comptes/FR76-001/solde").param("devise", "USD"))
+           .andExpect(status().isOk())
+           .andExpect(jsonPath("$.solde").value(110.00))
+           .andExpect(jsonPath("$.devise").value("USD"));
+    }
+}
+\end{lstlisting}
+  \source{\texttt{@MockitoBean} remplace l'ancien \texttt{@MockBean}. Contrôleur, service, repository, JPA et PostgreSQL sont réels.}
+\end{frame}
+
+\begin{frame}[fragile]{Une configuration par environnement}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+\begin{lstlisting}[language={}, basicstyle=\lstcode\scriptsize]
+# src/main/resources/application.properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/banque
+spring.datasource.username=banque
+
+# src/test/resources/application-test.properties
+spring.jpa.show-sql=true
+banque.notifications.actives=false
+\end{lstlisting}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@SpringBootTest
+@ActiveProfiles("test")
+class ... { }
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \small
+      \begin{itemize}
+        \item Le \textbf{code} est le même partout ; la \textbf{configuration} change selon l'environnement : développement, test, recette, production (CM6)
+        \item Profils Spring : \texttt{application-<profil>.properties}, activé par \texttt{@ActiveProfiles} ou une variable d'environnement
+        \item Avec \texttt{@ServiceConnection}, l'adresse de la base de test vient du conteneur : impossible de toucher la base de développement par erreur
+        \item Les mots de passe de production ne sont \alert{jamais} dans le dépôt
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Et l'API externe ? Tester l'adaptateur}
+  \begin{columns}[T]
+    \begin{column}{0.62\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@WireMockTest      // faux serveur HTTP local
+class HttpTauxChangeClientTest {
+  @Test
+  void lit_le_taux(WireMockRuntimeInfo wm) {
+    stubFor(get("/v1/EUR/USD")
+        .willReturn(okJson("{\"taux\": 1.10}")));
+    var client = new HttpTauxChangeClient(wm.getHttpBaseUrl());
+    assertThat(client.taux(EUR, USD)).isEqualByComparingTo("1.10");
+  }
+  @Test
+  void erreur500_devientTauxIndisponible(WireMockRuntimeInfo wm) {
+    stubFor(get("/v1/EUR/USD").willReturn(serverError()));
+    // ... assertThatThrownBy(...) : TauxIndisponibleException
+  }
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.35\textwidth}
+      \small
+      \begin{itemize}
+        \item Au CM3, on a simulé \textbf{notre} interface ; reste à tester son implémentation HTTP
+        \item Pas la vraie API (payante, lente, instable) : un \textbf{faux serveur HTTP} local (WireMock)
+        \item Vraies requêtes, vrai JSON, vraies erreurs (500, délai dépassé)
+        \item Les réponses simulées suivent la documentation du fournisseur : à revérifier de temps en temps
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\rdemo{1}{Une vraie base dans le test}{%
+  \item Lancer le test PostgreSQL : un conteneur apparaît (\texttt{docker ps}), le test passe, le conteneur disparaît
+  \item Lancer \textbf{le même test} sur H2 : rouge, sans aucune erreur SQL\ldots{} les \texttt{NULL} ne sont pas au même endroit
+  \item Toute l'application, contrôleur compris, avec seulement l'API de change simulée
+}{\texttt{CompteRepositoryPostgresTest}\\\texttt{CompteRepositoryH2Test}\\\texttt{CompteControllerIntegrationTest}\\[1mm]terminal : \texttt{docker ps}}
+
+\begin{frame}{Le coût des tests d'intégration}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{itemize}
+        \item Plus lents : démarrage de Spring, du conteneur, accès disque et réseau
+        \item Plus difficiles à diagnostiquer : un échec peut venir de n'importe quelle couche
+        \item Donc \textbf{moins nombreux} : un test par requête, mapping ou parcours important, pas un par règle métier
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Bonnes pratiques}
+        \begin{itemize}
+          \item Les règles métier restent testées en \textbf{unitaire} (TP1, TP3)
+          \item Un conteneur \texttt{static} partagé par classe, voire par toute la suite
+          \item Séparer les tests lents des tests rapides : \texttt{mvn test} pour les unitaires, \texttt{mvn verify} pour l'intégration (CM6)
+          \item Les lancer \textbf{tous} en CI, à chaque modification
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{À retenir}
+  \small
+  \begin{itemize}
+    \item Un test d'intégration vérifie que des composants \textbf{réels} fonctionnent \textbf{ensemble} : requêtes, mappings, contraintes, transactions, configuration
+    \item Jamais sur la base de développement : une base \textbf{dédiée}, dans un état connu au début de chaque test
+    \item H2 est rapide mais \textbf{n'est pas PostgreSQL} : différences silencieuses, pas de PL/pgSQL
+    \item \textbf{Testcontainers} : la vraie base, dans Docker, jetable ; \texttt{@ServiceConnection} la branche à Spring
+    \item Isolation : \textbf{rollback} après chaque test, chaque test crée ses propres données (\texttt{@Sql} ou Java)
+    \item Spring : \texttt{@DataJpaTest} pour les repositories, \texttt{@SpringBootTest} + \texttt{MockMvc} pour toute l'application, \texttt{@MockitoBean} pour ce qui reste hors périmètre
+    \item Une configuration par environnement (profils) ; le code ne change pas
+  \end{itemize}
+  \vspace{1mm}
+  \begin{exampleblock}{TP4}
+    Tester les repositories et l'API REST du projet fil rouge avec un vrai PostgreSQL.
+  \end{exampleblock}
+\end{frame}
+
+\rquestionslide
+
+\end{document}

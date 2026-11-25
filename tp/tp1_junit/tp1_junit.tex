@@ -1,0 +1,204 @@
+\documentclass[11pt]{article}
+\input{../../latex/common/r402-tp-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{./}}
+
+% A ajuster avant diffusion
+\newcommand{\rstarterurl}{\url{https://github.com/ctiber/r402}}
+\newcommand{\rdatelimite}{la veille de la séance du TP2, à 23\,h\,59}
+
+\begin{document}
+
+\rtpheader{1}{Projet fil rouge et JUnit avancé}
+
+\begin{infobox}[Objectifs]
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item Prendre en main le projet fil rouge que vous utiliserez pendant les six TP.
+  \item Choisir des cas de test à partir d'une spécification : partitions d'équivalence et valeurs limites.
+  \item Écrire des tests JUnit lisibles : Arrange / Act / Assert, tests paramétrés, \texttt{@Nested}, \texttt{assertAll}, AssertJ.
+  \item Trouver les bugs du code grâce aux tests, les corriger, et protéger le code contre les régressions.
+\end{itemize}
+\end{infobox}
+
+\section*{Contexte}
+
+Vous reprenez l'application bancaire de R3.07 (clients, comptes, opérations, virements), réécrite avec Spring Boot et un front Vue 3. Un projet de départ vous est fourni. Il fonctionne, mais \textbf{il est peu testé et contient des bugs}. Au fil des TP, vous allez le tester à tous les niveaux : domaine (TP1), acceptation (TP2), services (TP3), intégration avec la base (TP4), bout en bout (TP5), puis automatiser le tout dans une pipeline (TP6).
+
+Aujourd'hui, on se concentre sur la classe du domaine la plus importante : \texttt{Compte}. Elle ne dépend ni de la base de données, ni de Spring : on peut la tester avec JUnit seul.
+
+Vous travaillez \textbf{en binôme}, sur un dépôt Git par binôme, pendant tout le module.
+
+% ================================================================
+\section{Mise en place (15 min)}
+
+\begin{exobox}{Récupérer et lancer le projet}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Un seul membre du binôme importe le projet de départ dans un nouveau projet \textbf{privé} de la forge GitLab de l'IUT (\textit{New project} $\rightarrow$ \textit{Import project} $\rightarrow$ \textit{Repository by URL}), à partir de l'adresse :\\ \rstarterurl\\
+  L'import reprend toutes les branches du dépôt, dont \texttt{evolution-frais}, utilisée à la fin du TP.
+  \item Il ajoute son binôme et l'enseignant comme membres du projet (rôle \textit{Developer} pour le binôme, \textit{Reporter} pour l'enseignant).
+  \item Chacun clone le dépôt et l'ouvre dans IntelliJ IDEA.
+  \item Lancez les tests existants. Ils doivent tous passer :
+\begin{codebox}
+./mvnw test
+\end{codebox}
+  \item Démarrez la base de données, puis l'application, et ouvrez \url{http://localhost:8080} :
+\begin{codebox}
+docker compose up -d
+./mvnw spring-boot:run
+\end{codebox}
+\end{enumerate}
+\end{exobox}
+
+\begin{exobox}{Découvrir l'architecture}
+Parcourez le projet et répondez aux questions suivantes dans un fichier \texttt{docs/tp1.md} (quelques lignes suffisent).
+\begin{enumerate}[leftmargin=1.4em]
+  \item Dans quels paquetages se trouvent le domaine, les services, les repositories et les contrôleurs REST ?
+  \item De quels autres objets la classe \texttt{VirementService} a-t-elle besoin pour fonctionner ? Lesquels seraient gênants dans un test unitaire (lents, non reproductibles, extérieurs à l'application) ?
+  \item Combien de tests contient le projet ? Quelles classes testent-ils ? Que se passerait-il si on modifiait \texttt{Compte.debiter} demain ?
+  \item Où sont déclarées, dans le \texttt{pom.xml}, les dépendances JUnit et AssertJ ? Quelle est leur portée (\texttt{scope}) et pourquoi ?
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{La spécification de \texttt{Compte}}
+
+Voici l'interface publique de la classe \texttt{Compte} (paquetage \texttt{fr.iutvannes.banque.domaine}) :
+
+\begin{lstlisting}[language=Java]
+public class Compte {
+    public static final BigDecimal PLAFOND_EPARGNE = new BigDecimal("22950.00");
+
+    public Compte(String numero, BigDecimal soldeInitial)                  // compte courant, en euros
+    public Compte(String numero, TypeCompte type, BigDecimal soldeInitial) // COURANT ou EPARGNE
+    public Compte(String numero, Devise devise, BigDecimal soldeInitial)   // (utilise a partir du TP3)
+
+    public void setDecouvertAutorise(BigDecimal decouvert)
+    public void crediter(BigDecimal montant)
+    public void debiter(BigDecimal montant)
+    public void cloturer()
+
+    public String getNumero()
+    public TypeCompte getType()
+    public BigDecimal getSolde()
+    public BigDecimal getDecouvertAutorise()
+    public boolean isCloture()
+    public List<Operation> getOperations()   // historique, non modifiable
+}
+\end{lstlisting}
+
+Les règles métier à respecter sont les suivantes. \textbf{C'est la référence} : si le code ne fait pas ce qui est écrit ici, c'est le code qui a tort.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}>{\bfseries\color{qaaccentdark}}l p{14cm}@{}}
+\toprule
+R1 & \textbf{Montant.} Le montant d'un crédit ou d'un débit est strictement positif et a au plus deux décimales. Sinon (y compris s'il vaut \texttt{null}) : \texttt{IllegalArgumentException}. \\
+R2 & \textbf{Débit et découvert.} Un débit est accepté si le solde après l'opération reste supérieur ou égal à l'opposé du découvert autorisé (\texttt{solde - montant >= -decouvertAutorise}). Sinon : \texttt{SoldeInsuffisantException}. Le découvert autorisé vaut 0 par défaut ; il ne peut pas être négatif (\texttt{IllegalArgumentException}) ; il ne peut être modifié que sur un compte courant (\texttt{IllegalStateException} pour un compte épargne). \\
+R3 & \textbf{Plafond épargne.} Le solde d'un compte épargne ne peut pas dépasser \texttt{PLAFOND\_EPARGNE} (22\,950,00\,\euro{}). Un crédit qui ferait dépasser ce plafond est refusé : \texttt{PlafondDepasseException}. Un compte courant n'a pas de plafond. \\
+R4 & \textbf{Clôture.} Un compte ne peut être clôturé que si son solde est exactement nul ; sinon : \texttt{IllegalStateException}. Sur un compte clôturé, tout crédit ou débit lève \texttt{CompteClotureException}. \\
+R5 & \textbf{Historique.} Chaque crédit ou débit \textbf{réussi} ajoute une \texttt{Operation} (type, montant, date) à l'historique. Une opération \textbf{refusée} ne modifie ni le solde, ni l'historique. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{infobox}[Utilitaire fourni]
+La classe \texttt{TestUtils} (dans \texttt{src/test/java}) fournit \texttt{eur("12.50")}, un raccourci pour \texttt{new BigDecimal("12.50")}. Utilisez-la avec \texttt{import static fr.iutvannes.banque.TestUtils.eur;}.
+
+Pour comparer des \texttt{BigDecimal}, utilisez \texttt{assertThat(x).isEqualByComparingTo("70")} (AssertJ) : \texttt{assertEquals} échoue entre \texttt{70} et \texttt{70.00} (voir le cours).
+\end{infobox}
+
+% ================================================================
+\section{Choisir ses cas de test (15 min)}
+
+\begin{exobox}{Partitions d'équivalence et valeurs limites}
+Avant d'écrire la moindre ligne de code, complétez dans \texttt{docs/tp1.md} un tableau des cas de test pour les règles \textbf{R1, R2 et R3}. Pour chaque règle, identifiez les \textbf{partitions} (classes d'entrées qui se comportent pareil) et les \textbf{valeurs limites} (de chaque côté de chaque frontière). Les premières lignes sont données :
+
+\medskip
+{\footnotesize
+\begin{tabular}{@{}lllll@{}}
+\toprule
+\textbf{Règle} & \textbf{Partition / limite} & \textbf{Contexte} & \textbf{Entrée} & \textbf{Résultat attendu} \\
+\midrule
+R1 & montant nul (limite) & solde 100.00 & \texttt{debiter(0)} & \texttt{IllegalArgumentException} \\
+R1 & plus petit montant valide (limite) & solde 100.00 & \texttt{debiter(0.01)} & solde 99.99 \\
+R1 & trop de décimales & solde 100.00 & \texttt{crediter(10.001)} & \texttt{IllegalArgumentException} \\
+R2 & \ldots & \ldots & \ldots & \ldots \\
+\bottomrule
+\end{tabular}}
+\medskip
+
+\textit{Indice} : pour R2, pensez au cas où le découvert autorisé est 0 \textbf{et} au cas où il vaut par exemple 200.00. Pour R3, où se trouve exactement la frontière ?
+\end{exobox}
+
+% ================================================================
+\section{Écrire les tests (40 min)}
+
+Écrivez vos tests dans \texttt{src/test/java/fr/iutvannes/banque/domaine/CompteTest.java}. Respectez la structure Arrange / Act / Assert et donnez à chaque test un nom (ou un \texttt{@DisplayName}) qui dit ce qu'il vérifie.
+
+\begin{exobox}{Tests paramétrés pour R1 et R2}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Transformez les lignes de votre tableau pour R1 en \textbf{un} test paramétré pour les montants invalides (\texttt{@ValueSource} ou \texttt{@CsvSource}) et un autre pour les montants valides. Le cas \texttt{null} se traite avec \texttt{@NullSource}.
+  \item Faites de même pour R2, avec \texttt{@CsvSource} : solde initial, découvert autorisé, montant, résultat attendu. Faut-il un seul test paramétré, ou un pour les débits acceptés et un pour les débits refusés ? Justifiez en une phrase dans \texttt{docs/tp1.md}.
+  \item Pour les débits refusés, vérifiez avec \texttt{assertThrows} (ou \texttt{assertThatThrownBy}) le type de l'exception \textbf{et} que le solde n'a pas changé.
+  \item Utilisez l'attribut \texttt{name} de \texttt{@ParameterizedTest} pour que le rapport de tests soit lisible.
+\end{enumerate}
+\end{exobox}
+
+\begin{exobox}{Organiser les tests par contexte avec \texttt{@Nested}}
+Ajoutez dans \texttt{CompteTest} des classes imbriquées (\texttt{@Nested} + \texttt{@DisplayName}), chacune avec son propre \texttt{@BeforeEach} :
+\begin{itemize}[leftmargin=1.2em]
+  \item \textbf{« Un compte épargne »} : tests de R3 (y compris : un compte courant n'a pas de plafond ; le découvert d'un compte épargne ne peut pas être modifié) ;
+  \item \textbf{« Un compte clôturé »} : tests de R4 (clôture d'un compte à solde nul, positif, \textbf{négatif} ; opérations sur un compte clôturé) ;
+  \item \textbf{« L'historique »} : tests de R5. Après un crédit puis un débit réussis, vérifiez en un seul test, avec \texttt{assertAll} ou AssertJ (\texttt{extracting}, \texttt{containsExactly}), le nombre d'opérations, leurs types et leurs montants. Vérifiez aussi qu'un débit \textbf{refusé} n'ajoute rien.
+\end{itemize}
+Lancez les tests depuis IntelliJ et vérifiez que l'arborescence affichée se lit comme une spécification.
+\end{exobox}
+
+% ================================================================
+\section{Corriger les bugs, sans régression (20 min)}
+
+Normalement, plusieurs de vos tests sont \textbf{rouges}. Avant de toucher au code, assurez-vous que c'est bien le code qui a tort et pas le test : relisez la règle concernée.
+
+\begin{exobox}{Corriger un bug à la fois}
+Pour \textbf{chaque} bug trouvé :
+\begin{enumerate}[leftmargin=1.4em]
+  \item notez dans \texttt{docs/tp1.md} : la règle violée, le test qui le révèle, la cause dans le code ;
+  \item corrigez le code de \texttt{Compte} (et seulement lui : on ne modifie pas un test pour le faire passer) ;
+  \item relancez \textbf{tous} les tests, pas seulement celui-ci ;
+  \item faites un commit dont le message cite le bug corrigé.
+\end{enumerate}
+Si aucun de vos tests n'échoue, c'est mauvais signe : complétez votre tableau de cas, il manque des valeurs limites.
+\end{exobox}
+
+\begin{exobox}{Non-régression : la branche d'un collègue}
+Un collègue a travaillé en parallèle sur la branche \texttt{evolution-frais} : il a ajouté les frais de tenue de compte et en a profité pour « simplifier » le code de \texttt{Compte}. Il affirme que « tout marche, l'application démarre ».
+\begin{enumerate}[leftmargin=1.4em]
+  \item Fusionnez sa branche dans la vôtre :
+\begin{codebox}
+git fetch origin
+git merge origin/evolution-frais
+\end{codebox}
+  \item Relancez tous les tests. Quelle règle n'est plus respectée ? Qu'est-ce qui l'aurait révélé si vos tests n'avaient pas existé ?
+  \item Corrigez la régression. Expliquez en deux ou trois phrases dans \texttt{docs/tp1.md} en quoi votre suite de tests a servi de filet de sécurité.
+  \item \textit{Pour aller plus loin} : la nouvelle méthode \texttt{appliquerFraisTenueCompte} n'est pas testée. Écrivez sa spécification (en vous inspirant des règles R1 à R5), puis ses tests.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Rendu}
+
+\begin{infobox}[À rendre avant \rdatelimite]
+Sur le dépôt du binôme, un \textbf{tag} \texttt{tp1} pointant sur le commit rendu :
+\begin{codebox}
+git tag tp1
+git push origin tp1
+\end{codebox}
+Le commit doit contenir :
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item \texttt{CompteTest.java} : tests paramétrés (R1, R2), contextes \texttt{@Nested} (R3, R4, R5) ;
+  \item \texttt{Compte.java} corrigé : \texttt{./mvnw test} passe entièrement ;
+  \item \texttt{docs/tp1.md} : réponses sur l'architecture, tableau des cas de test, journal des bugs, analyse de la régression.
+\end{itemize}
+Un rendu manquant ou en retard compte comme un défaut pour le coefficient d'assiduité (voir le cours).
+\end{infobox}
+
+\end{document}

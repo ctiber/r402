@@ -1,0 +1,12 @@
+# Fichiers intermediaires de LaTeX
+*.aux
+*.log
+*.nav
+*.out
+*.snm
+*.toc
+*.vrb
+*.fls
+*.fdb_latexmk
+*.listing
+*.synctex.gz

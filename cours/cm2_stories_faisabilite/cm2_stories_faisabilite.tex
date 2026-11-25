@@ -1,0 +1,515 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\input{../../latex/common/r402-slides-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{img/}}
+
+\title{User stories, tests d'acceptation et faisabilité}
+\author[C. Tibermacine]{Chouki Tibermacine}
+\date{}
+
+% Gherkin (fichiers .feature), en francais
+\lstdefinelanguage{Gherkin}{
+  morekeywords={Fonctionnalité, Scénario, Plan, du, scénario, Exemples, Contexte,
+    Étant, donné, Quand, Alors, Et, Mais, Feature, Scenario, Given, When, Then, And, But, Examples},
+  sensitive=true,
+  comment=[l]{\#},
+  morestring=[b]"
+}
+\lstdefinestyle{gherkin}{language=Gherkin, basicstyle=\lstcode\scriptsize}
+\lstdefinestyle{sortie}{language={}, basicstyle=\lstcode\scriptsize, keywordstyle={}, commentstyle={}, stringstyle={}}
+
+\tikzset{
+  etape/.style={rectangle, rounded corners=3pt, draw=qaaccent, thick, fill=qapanel, text=qatext,
+    minimum height=0.7cm, minimum width=2.3cm, align=center, font=\scriptsize},
+  arr/.style={-Latex, qamuted, thick}
+}
+
+\begin{document}
+
+\rtitleslide{2}{User stories, tests d'acceptation et faisabilité}
+
+\begin{frame}{Où en est-on ?}
+  \begin{itemize}
+    \item CM1 : \textbf{vérifier} que le code fait ce qu'il doit faire (tests unitaires de \texttt{Compte})
+    \item Mais d'où viennent les règles R1 à R5 du TP1 ? Qui a décidé qu'un compte épargne est plafonné ?
+    \item Aujourd'hui : \textbf{valider} qu'on construit le bon produit
+      \begin{itemize}
+        \item exprimer le besoin du client : les \textbf{user stories}
+        \item le rendre vérifiable : les \textbf{critères d'acceptation}
+        \item le rendre exécutable : les \textbf{tests d'acceptation} (Cucumber)
+        \item avant de s'engager : la story est-elle \textbf{faisable} ?
+      \end{itemize}
+  \end{itemize}
+  \vspace{3mm}
+  \begin{datacard}
+    \small \alert{besoin} $\rightarrow$ user story $\rightarrow$ critères d'acceptation $\rightarrow$ scénarios exécutables $\rightarrow$ code $\rightarrow$ recette
+  \end{datacard}
+\end{frame}
+
+% ================================================================
+\section{Méthodes agiles et user stories}
+
+\begin{frame}{Les méthodes agiles en deux minutes}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{block}{Le Manifeste agile (2001)}
+        \small
+        \begin{itemize}
+          \item Les individus et leurs interactions, plus que les processus et les outils
+          \item Un logiciel qui fonctionne, plus qu'une documentation exhaustive
+          \item La collaboration avec le client, plus que la négociation contractuelle
+          \item L'adaptation au changement, plus que le suivi d'un plan
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{itemize}
+        \item Développer par \textbf{petits incréments}, livrés et montrés au client régulièrement
+        \item Méthodes les plus répandues : \textbf{Scrum} (organisation en \textit{sprints} de 1 à 4 semaines), \textbf{eXtreme Programming} (XP : pratiques techniques, dont les tests automatisés), Kanban
+        \item Le besoin n'est pas figé dans un cahier des charges : il est découpé en petits morceaux, \alert{les user stories}, et précisé au fil de l'eau
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Les user stories dans Scrum}
+  \begin{center}
+  \begin{tikzpicture}[node distance=0.32cm, every node/.append style={minimum width=2.1cm}]
+    \node[etape] (po) {\textit{Product owner}\\{\tiny\color{qamuted}porte le besoin}};
+    \node[etape, right=of po, minimum width=2.5cm] (backlog) {\textit{Product backlog}\\{\tiny\color{qamuted}stories triées par priorité}};
+    \node[etape, right=of backlog, minimum width=2.3cm] (sprint) {\textit{Sprint backlog}\\{\tiny\color{qamuted}stories choisies}};
+    \node[etape, right=of sprint] (dev) {Sprint\\{\tiny\color{qamuted}1 à 4 semaines}};
+    \node[etape, right=of dev, draw=qaaccent2] (incr) {Incrément\\{\tiny\color{qamuted}démontré, recetté}};
+    \draw[arr] (po) -- (backlog);
+    \draw[arr] (backlog) -- (sprint);
+    \draw[arr] (sprint) -- (dev);
+    \draw[arr] (dev) -- (incr);
+    \draw[arr, qaaccent2] (incr.south) -- ++(0,-0.55) -| node[pos=0.25, below, font=\tiny, text=qamuted] {retours du client : nouvelles stories, priorités revues} (backlog.south);
+  \end{tikzpicture}
+  \end{center}
+  \vspace{2mm}
+  \begin{itemize}
+    \item Le \textbf{product owner} représente le client : il écrit les stories et les ordonne
+    \item L'\textbf{équipe de développement} les estime, les découpe et choisit celles qu'elle peut terminer pendant le sprint
+    \item À la fin du sprint, les stories terminées sont \textbf{démontrées} et \textbf{validées} par rapport à leurs critères d'acceptation
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Une user story}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{datacard}
+        \raggedright
+        \textbf{\color{qaaccent}En tant que} client de la banque,\\
+        \textbf{\color{qaaccent}je veux} programmer un virement à une date future\\
+        \textbf{\color{qaaccent}afin de} payer mon loyer sans y penser chaque mois.
+      \end{datacard}
+      \vspace{2mm}
+      \begin{itemize}
+        \item \textbf{Qui ?} un rôle (pas « l'utilisateur »)
+        \item \textbf{Quoi ?} un besoin, pas une solution technique
+        \item \textbf{Pourquoi ?} la valeur attendue : aide à arbitrer
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{Les 3C (Ron Jeffries, XP)}
+        \begin{itemize}
+          \item \textbf{Carte} : une phrase courte, qui tient sur un post-it
+          \item \textbf{Conversation} : les détails se discutent entre le client et l'équipe
+          \item \textbf{Confirmation} : les \alert{critères d'acceptation} disent quand la story est réalisée
+        \end{itemize}
+      \end{block}
+      \source{Une story n'est pas une spécification complète : c'est une promesse de conversation.}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Une bonne story est INVEST}
+  \begin{datacard}
+    \small
+    \begin{tabular}{@{}cl p{9.4cm}@{}}
+      \textbf{\color{qaaccent}\Large I} & \textbf{Indépendante} & peut être développée et livrée sans attendre une autre story \\[0.5mm]
+      \textbf{\color{qaaccent}\Large N} & \textbf{Négociable} & les détails restent ouverts à la discussion ; ce n'est pas un contrat \\[0.5mm]
+      \textbf{\color{qaaccent}\Large V} & \textbf{Valeur} & apporte quelque chose à un utilisateur ou au client (pas « créer la table \texttt{Operation} ») \\[0.5mm]
+      \textbf{\color{qaaccent}\Large E} & \textbf{Estimable} & l'équipe comprend assez bien la story pour estimer son coût \\[0.5mm]
+      \textbf{\color{qaaccent}\Large S} & \textbf{Small} & petite : réalisable en quelques jours, bien moins qu'un sprint \\[0.5mm]
+      \textbf{\color{qaaccent}\Large T} & \textbf{Testable} & on sait écrire des critères qui disent si elle est réalisée ou non \\
+    \end{tabular}
+  \end{datacard}
+  \vspace{1mm}
+  \source{Bill Wake, 2003. Une story trop grosse (\textit{epic}) se découpe en plusieurs stories.}
+\end{frame}
+
+\begin{frame}{Qu'est-ce qui ne va pas ?}
+  \small
+  \begin{enumerate}
+    \item « En tant que développeur, je veux ajouter un index sur \texttt{Operation.numCompte}. »
+      \uncover<2->{\\ \alert{$\rightarrow$ tâche technique, pas de valeur pour un utilisateur : c'est un moyen, pas un besoin}}
+    \item « En tant que client, je veux gérer mes comptes. »
+      \uncover<2->{\\ \alert{$\rightarrow$ trop grosse (\textit{epic}) : consulter, virer, programmer, clôturer\ldots{} à découper}}
+    \item « En tant qu'utilisateur, je veux que l'application soit rapide. »
+      \uncover<2->{\\ \alert{$\rightarrow$ non testable : rapide comment ? « la liste des comptes s'affiche en moins de 2 s »}}
+    \item « En tant que client, je veux un bouton bleu en haut à droite qui ouvre une fenêtre modale. »
+      \uncover<2->{\\ \alert{$\rightarrow$ décrit une solution, pas un besoin ; pas de « afin de » : pourquoi ce bouton ?}}
+    \item « En tant que conseiller, je veux voir les comptes de mes clients, une fois que la story 12 sera finie. »
+      \uncover<2->{\\ \alert{$\rightarrow$ dépendante d'une autre story : à réordonner ou à redécouper}}
+  \end{enumerate}
+\end{frame}
+
+% ================================================================
+\section{Critères d'acceptation}
+
+\begin{frame}{Des règles\ldots{} et des exemples}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Règles (abstraites)}
+        \small
+        \begin{itemize}
+          \item Un virement programmé est exécuté à la date choisie
+          \item La date doit être dans le futur
+          \item Si le solde est insuffisant le jour J, le virement est rejeté et le client est prévenu
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{exampleblock}{Exemples (concrets)}
+        \small
+        \begin{itemize}
+          \item Solde 900 \euro{}, virement de 650 \euro{} programmé le 5 : le 5, le solde passe à 250 \euro{}
+          \item Programmé « hier » : refusé à la saisie
+          \item Solde 400 \euro{} le 5, virement de 650 \euro{} : rejeté, notification envoyée, solde inchangé
+        \end{itemize}
+      \end{exampleblock}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{itemize}
+    \item Les exemples lèvent les ambiguïtés : \textit{« et si le 5 est un dimanche ? »} surgit dès qu'on écrit un exemple
+    \item \textbf{Spécification par l'exemple} : client, développeurs et testeurs écrivent ensemble les exemples (les « trois amigos »)
+    \item Chaque exemple deviendra un \textbf{test d'acceptation}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Le format Gherkin : Étant donné / Quand / Alors}
+\begin{lstlisting}[style=gherkin]
+# language: fr
+(*@\textcolor{qacodekw}{\textbf{Fonctionnalité:}}@*) Virement entre deux comptes
+  En tant que client de la banque,
+  je veux virer de l'argent entre mes comptes
+  afin de gérer mon budget.
+  (*@\textcolor{qacodekw}{\textbf{Scénario:}}@*) virement accepté
+    (*@\textcolor{qacodekw}{\textbf{Étant donné}}@*) un compte "FR76-001" avec un solde de 500,00 €
+    Et un compte "FR76-002" avec un solde de 100,00 €
+    Quand le client vire 200,00 € de "FR76-001" vers "FR76-002"
+    Alors le solde de "FR76-001" est de 300,00 €
+    Et le solde de "FR76-002" est de 300,00 €
+
+  (*@\textcolor{qacodekw}{\textbf{Scénario:}}@*) virement refusé, solde insuffisant
+    (*@\textcolor{qacodekw}{\textbf{Étant donné}}@*) un compte "FR76-001" avec un solde de 50,00 €
+    Quand le client vire 200,00 € de "FR76-001" vers "FR76-002"
+    Alors le virement est refusé
+    Et le solde de "FR76-001" est de 50,00 €
+\end{lstlisting}
+  \small
+  \textbf{Étant donné} : le contexte (Arrange) \quad
+  \textbf{Quand} : l'action (Act) \quad
+  \textbf{Alors} : le résultat attendu (Assert) \\[1mm]
+  Lisible par le client, mais \textbf{structuré} : chaque ligne pourra être exécutée.
+\end{frame}
+
+\begin{frame}[fragile]{Plusieurs exemples, un seul scénario}
+\begin{lstlisting}[style=gherkin]
+  (*@\textcolor{qacodekw}{\textbf{Plan du scénario:}}@*) virement avec confirmation au-delà de 1 000 €
+    (*@\textcolor{qacodekw}{\textbf{Étant donné}}@*) un compte "FR76-001" avec un solde de 5000,00 €
+    Quand le client vire <montant> € de "FR76-001" vers "FR76-002"
+    Alors une confirmation est demandée : <confirmation>
+
+    Exemples:
+      | montant | confirmation |
+      |  999,99 | non          |
+      | 1000,00 | non          |
+      | 1000,01 | oui          |
+\end{lstlisting}
+  \begin{itemize}
+    \item L'équivalent d'un \textbf{test paramétré} JUnit, lisible par le client
+    \item On y retrouve les \textbf{valeurs limites} du CM1 : la discussion « et à exactement 1\,000 \euro{} ? » a lieu \alert{avant} le code
+    \item Bon critère d'acceptation : précis, vérifiable, indépendant de l'interface (pas « cliquer sur le bouton vert »)
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Definition of Ready, Definition of Done}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Definition of Ready (DoR)}
+        Quand une story peut-elle entrer dans un sprint ?
+        \begin{itemize}
+          \item elle respecte INVEST
+          \item ses critères d'acceptation sont écrits et validés par le \textit{product owner}
+          \item elle est estimée
+          \item ses dépendances et risques sont connus
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Definition of Done (DoD)}
+        Quand une story est-elle terminée ?
+        \begin{itemize}
+          \item tous ses critères d'acceptation passent
+          \item code relu, tests unitaires et d'intégration écrits
+          \item \textbf{aucune régression} : toute la suite de tests passe
+          \item déployée en recette et validée par le client
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{center}
+    « Ça marche sur ma machine » n'est pas « terminé ». La DoD est commune à toute l'équipe.
+  \end{center}
+\end{frame}
+
+\begin{frame}{Tests d'acceptation et recette}
+  \begin{itemize}
+    \item \textbf{Recette} : phase où le client vérifie que ce qui a été livré correspond à ce qui était demandé
+      \begin{itemize}
+        \item sur un environnement dédié, proche de la production (CM6)
+        \item à l'aide des critères d'acceptation des stories
+        \item conclue par un \textbf{procès-verbal de recette} : accepté, accepté avec réserves, refusé
+      \end{itemize}
+    \item Sans critères d'acceptation, la recette tourne à la négociation : « ce n'est pas ce que j'avais demandé »
+    \item Si les critères sont \textbf{automatisés}, la recette porte sur ce qui ne s'automatise pas (ergonomie, cas imprévus) et on peut rejouer les scénarios à chaque livraison
+  \end{itemize}
+\end{frame}
+
+% ================================================================
+\section{Des scénarios exécutables : ATDD, BDD et Cucumber}
+
+\begin{frame}{Écrire les tests d'acceptation avant le code}
+  \begin{columns}[c]
+    \begin{column}{0.52\textwidth}
+      \begin{center}
+      \begin{tikzpicture}
+        \draw[qaaccent2, very thick, -Latex] (80:1.9) arc (80:-250:1.9);
+        \draw[qaaccent, very thick, -Latex] (60:0.95) arc (60:-270:0.95);
+        \node[font=\tiny, text=qaaccent2, align=center] at (0,1.55) {boucle d'acceptation};
+        \node[font=\tiny, text=qaaccent2, align=center] at (-1.95,-1.95) {1. scénario\\rouge};
+        \node[font=\tiny, text=qaaccent2, align=center] at (2.0,-1.95) {3. scénario\\vert};
+        \node[font=\tiny, text=qaaccent, align=center] at (0,0) {2. tests unitaires\\rouge $\rightarrow$ vert\\(TDD)};
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{itemize}
+        \item \textbf{ATDD} (\textit{Acceptance Test-Driven Development}) :
+          \begin{enumerate}
+            \item écrire le scénario d'acceptation : il échoue
+            \item développer, guidé par des tests unitaires
+            \item le scénario passe : la story est réalisée
+          \end{enumerate}
+        \item \textbf{BDD} (\textit{Behaviour-Driven Development}, Dan North) : même idée, avec un vocabulaire métier partagé (Gherkin)
+        \item Le scénario dit \alert{quand s'arrêter} : ni plus, ni moins que le besoin
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Cucumber : du texte au code}
+  \begin{center}
+  \begin{tikzpicture}[node distance=0.9cm]
+    \node[etape, minimum width=3.2cm] (feat) {\texttt{virement.feature}\\{\tiny\color{qamuted}Gherkin, écrit avec le client}};
+    \node[etape, right=of feat, minimum width=3.2cm] (steps) {\textit{Step definitions}\\{\tiny\color{qamuted}méthodes Java annotées}};
+    \node[etape, right=of steps, minimum width=3.2cm] (app) {Code de l'application\\{\tiny\color{qamuted}\texttt{Compte}, \texttt{VirementService}\ldots}};
+    \draw[arr] (feat) -- node[above, font=\tiny, text=qamuted] {chaque ligne} node[below, font=\tiny, text=qamuted] {cherche son étape} (steps);
+    \draw[arr] (steps) -- node[above, font=\tiny, text=qamuted] {appelle} (app);
+  \end{tikzpicture}
+  \end{center}
+  \vspace{2mm}
+  \begin{itemize}
+    \item \textbf{Cucumber} (Cucumber-JVM pour Java) lit les fichiers \texttt{.feature} et exécute, pour chaque ligne, la méthode Java dont l'expression correspond
+    \item Les étapes sont \textbf{réutilisables} : « un compte \ldots{} avec un solde de \ldots{} » sert dans des dizaines de scénarios
+    \item Exécuté par JUnit (\texttt{mvn test}), comme les autres tests : vert ou rouge, rapport HTML
+    \item Les \texttt{.feature} deviennent une \textbf{documentation vivante} : elle ne peut pas être fausse, sinon les tests échouent
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Les \textit{step definitions}}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+public class VirementSteps {
+    private final ContexteBanque contexte;   // comptes en mémoire + VirementService
+
+    public VirementSteps(ContexteBanque contexte) { this.contexte = contexte; }
+
+    @Given("un compte {string} avec un solde de {bigdecimal} €")
+    public void unCompte(String numero, BigDecimal solde) {
+        contexte.ajouterCompte(new Compte(numero, solde));
+    }
+    @When("le client vire {bigdecimal} € de {string} vers {string}")
+    public void vire(BigDecimal montant, String source, String cible) {
+        contexte.virementService().virer(source, cible, montant);
+    }
+    @Then("le solde de {string} est de {bigdecimal} €")
+    public void soldeEst(String numero, BigDecimal attendu) {
+        assertThat(contexte.compte(numero).getSolde()).isEqualByComparingTo(attendu);
+    }
+}
+\end{lstlisting}
+  \source{\texttt{\{string\}}, \texttt{\{bigdecimal\}} : expressions Cucumber. Avec \texttt{\# language: fr}, les nombres s'écrivent à la française (\texttt{500,00}).}
+\end{frame}
+
+\rdemo{1}{Un scénario qui trouve un bug}{%
+  \item Lire le fichier \texttt{.feature} comme le ferait le client
+  \item Lancer : 4 scénarios verts, 1 exemple rouge : \texttt{1000,00 | non}
+  \item Le client a dit « \textbf{au-delà} de 1\,000 \euro{} », le code dit \texttt{>=}
+  \item Une étape inconnue : Cucumber propose le code à écrire
+  \item Le rapport HTML, lisible par le client
+}{\texttt{features/virement.feature}\\\texttt{acceptation/VirementSteps}\\\texttt{Banque}\\\texttt{target/cucumber.html}}
+
+% ================================================================
+\section{Critères de faisabilité}
+
+\begin{frame}{Faisable ? Cinq questions (TELOS)}
+  \small
+  \begin{datacard}
+    \begin{tabular}{@{}p{2.6cm}p{10.2cm}@{}}
+      \toprule
+      \textbf{\color{qaaccent}Technique} & Maîtrise-t-on les technologies ? Les données existent-elles ? Dépend-on d'un service externe (API) fiable, documenté, accessible ? \\
+      \textbf{\color{qaaccent}Économique} & Le coût (développement, licences, hébergement, appels d'API payants) est-il justifié par la valeur apportée ? \\
+      \textbf{\color{qaaccent}Légale} & Données personnelles (RGPD), réglementation du secteur (banque, santé), licences des bibliothèques utilisées \\
+      \textbf{\color{qaaccent}Opérationnelle} & Les utilisateurs pourront-ils et voudront-ils s'en servir ? L'équipe a-t-elle les compétences ? Qui l'exploitera ? \\
+      \textbf{\color{qaaccent}Temporelle} (\textit{Scheduling}) & Peut-on le livrer dans les délais ? Que faut-il abandonner sinon ? \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{2mm}
+  \begin{itemize}
+    \item Ces questions se posent pour un projet entier \textbf{et} pour chaque story, avant de s'engager
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Estimer : points de story et \textit{planning poker}}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item On estime une \textbf{taille relative}, pas des heures : « deux fois plus gros que la story X »
+        \item Échelle de Fibonacci : 1, 2, 3, 5, 8, 13, 20, 40, 100
+          \begin{itemize}
+            \item plus c'est gros, plus c'est incertain
+            \item au-delà de 13 : story à découper
+          \end{itemize}
+        \item \textbf{Planning poker} : chacun choisit une carte en secret, on révèle ensemble, les extrêmes s'expliquent, on revote
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{Vélocité}
+        \begin{itemize}
+          \item Nombre de points terminés par sprint, mesuré sur les sprints passés
+          \item Backlog de 120 points, vélocité de 20 : environ 6 sprints
+          \item Permet de dire tôt : « tout ne tiendra pas dans les délais »
+        \end{itemize}
+      \end{block}
+      \begin{alertblock}{Le « ? »}
+        Personne ne sait estimer ? La story n'est pas faisable \textbf{en l'état} : il manque de l'information.
+      \end{alertblock}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Les risques : probabilité $\times$ impact}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[x=1.25cm, y=0.95cm]
+        \foreach \i in {0,1,2} \foreach \j in {0,1,2} {
+          \pgfmathtruncatemacro{\s}{\i+\j}
+          \ifnum\s<2 \def\c{qapanelalt}\else\ifnum\s<4 \def\c{qaaccent2!45!qapanel}\else\def\c{qaaccent!60!qapanel}\fi\fi
+          \fill[\c, draw=qaline] (\i,\j) rectangle (\i+1,\j+1);
+        }
+        \node[font=\tiny, text=qamuted, rotate=90] at (-0.3,1.5) {probabilité};
+        \node[font=\tiny, text=qamuted] at (1.5,-0.3) {impact};
+        \node[font=\tiny, text=qatext, align=center] at (0.5,2.5) {A};
+        \node[font=\tiny, text=qatext, align=center] at (1.5,1.5) {B};
+        \node[font=\tiny, text=qatext, align=center] at (2.5,0.5) {C};
+        \node[font=\tiny, text=qatext, align=center] at (2.5,1.5) {D};
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \small
+      \begin{itemize}
+        \item[A] L'équipe découvre Cucumber : retard de quelques jours
+        \item[B] L'API de taux de change gratuite limite le nombre d'appels
+        \item[C] Fuite de données bancaires
+        \item[D] Le service SMS change ses conditions et devient payant
+      \end{itemize}
+      \vspace{2mm}
+      Pour chaque risque : \textbf{éviter} (changer de solution), \textbf{réduire} (tester, prévoir un plan B), \textbf{transférer} (contrat, assurance), \textbf{accepter} (et le surveiller)
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Lever une incertitude : le \textit{spike}}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item \textbf{Spike} (XP) : une courte exploration \textbf{limitée dans le temps} pour répondre à une question précise
+        \item Exemple : \textit{« Quelle API de taux de change utiliser ? Limites d'appels ? Format ? Disponibilité ? »}
+          \begin{itemize}
+            \item 2 heures, un petit programme jetable
+            \item résultat : une \textbf{décision}, et une story devenue estimable
+          \end{itemize}
+        \item \textbf{Preuve de concept} (POC) : même idée à l'échelle d'un projet (« la technologie X tient-elle la charge ? »)
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{La testabilité, critère de faisabilité}
+        \begin{itemize}
+          \item Une story dont on ne sait pas écrire les critères d'acceptation n'est \textbf{pas prête}
+          \item Signes d'alerte : « rapide », « intuitif », « sécurisé », « comme l'ancien système »
+          \item Des règles qui se \textbf{contredisent} apparaissent souvent en écrivant les exemples
+          \item Une dépendance externe impossible à simuler rend les tests impossibles
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{La grille d'analyse de faisabilité (TP2)}
+  \scriptsize
+  \begin{datacard}
+    \setlength{\tabcolsep}{3pt}
+    \begin{tabular}{@{}p{2.0cm}p{2.0cm}p{0.8cm}p{1.5cm}p{0.9cm}p{1.7cm}p{1.1cm}p{1.6cm}@{}}
+      \toprule
+      \textbf{Story} & \textbf{Technique} & \textbf{Points} & \textbf{Dépendances} & \textbf{Légal} & \textbf{Testable ?} & \textbf{Risques} & \textbf{Décision} \\
+      \midrule
+      Virement programmé & maîtrisé (planificateur Spring) & 5 & horloge & -- & oui (exemples écrits) & faible & \textbf{\color{qaaccent}prête} \\[1mm]
+      Conversion de devises & API externe inconnue & ? & API de taux & -- & partiellement & B & \textbf{\color{qaaccent2}spike} \\[1mm]
+      « L'appli doit être sûre » & ? & ? & ? & RGPD & non & C & \textbf{\color{qaaccent2}reformuler} \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{2mm}
+  \normalsize
+  \begin{itemize}
+    \item Décisions possibles : \textbf{prête}, \textbf{spike} d'abord, \textbf{reformuler} ou \textbf{découper}, \textbf{abandonner}
+    \item Une décision se \textbf{justifie} : c'est ce qui sera évalué en TP, plus que la case cochée
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{À retenir}
+  \footnotesize
+  \begin{itemize}
+    \item Les user stories viennent des \textbf{méthodes agiles} : le besoin est découpé en petits morceaux, ordonnés dans le \textit{product backlog} et précisés au fil des sprints
+    \item « En tant que\ldots{} je veux\ldots{} afin de\ldots{} » ; une bonne story est \textbf{INVEST} ; carte, conversation, \textbf{confirmation}
+    \item Les critères d'acceptation s'écrivent avec des \textbf{exemples} concrets (Étant donné / Quand / Alors), qui révèlent les ambiguïtés et les valeurs limites
+    \item Avec Cucumber, ces exemples deviennent des \textbf{tests d'acceptation exécutables}, écrits \textbf{avant} le code (ATDD / BDD)
+    \item Avant de s'engager : faisabilité \textbf{technique, économique, légale, opérationnelle, temporelle} ; estimer, évaluer les risques, lever les incertitudes par un \textit{spike}
+    \item Une story non testable n'est pas prête
+  \end{itemize}
+  \vspace{0mm}
+  \begin{exampleblock}{TP2}
+    Rédiger des stories et leurs critères, analyser leur faisabilité, puis automatiser les scénarios avec Cucumber.
+  \end{exampleblock}
+\end{frame}
+
+\rquestionslide
+
+\end{document}

@@ -1,0 +1,78 @@
+# Exemple de pipeline GitLab CI pour le projet fil rouge (montre en cours, non execute ici).
+# A copier sous le nom .gitlab-ci.yml a la racine du depot.
+
+stages: [build, test, e2e, qualite, recette, production]
+
+default:
+  image: maven:3.9-eclipse-temurin-21
+  cache:
+    key: maven
+    paths: [.m2/repository]
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  MAVEN_CLI: "--batch-mode --no-transfer-progress"
+  # Testcontainers parle au Docker du service docker:dind
+  DOCKER_HOST: "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""
+
+compiler:
+  stage: build
+  script: mvn $MAVEN_CLI compile
+
+tests:
+  stage: test
+  services:
+    - name: docker:dind
+      command: ["--tls=false"]
+  script:
+    - mvn $MAVEN_CLI verify -Dgroups='!e2e'          # unitaires + integration (Testcontainers) + JaCoCo
+    - >-
+      LC_ALL=C awk -F, 'NR>1 {m+=$6; c+=$7} END {printf "Couverture des branches : %.1f %%\n", 100*c/(m+c)}'
+      target/site/jacoco/jacoco.csv
+  coverage: '/Couverture des branches : (\d+\.\d+) %/'
+  artifacts:
+    when: always
+    reports:
+      junit: [target/surefire-reports/TEST-*.xml, target/failsafe-reports/TEST-*.xml]
+      coverage_report:
+        coverage_format: jacoco
+        path: target/site/jacoco/jacoco.xml
+    paths: [target/site/jacoco/]
+
+e2e:
+  stage: e2e
+  image: mcr.microsoft.com/playwright/java:v1.64.0-noble   # Java, Maven et navigateurs deja installes
+  services:
+    - name: docker:dind
+      command: ["--tls=false"]
+  script: mvn $MAVEN_CLI verify -Dgroups=e2e -Djacoco.skip=true
+  artifacts:
+    when: on_failure
+    paths: [target/traces/]                                # traces Playwright des tests en echec
+
+mutation:
+  stage: qualite
+  script: mvn $MAVEN_CLI test-compile org.pitest:pitest-maven:mutationCoverage
+  artifacts:
+    paths: [target/pit-reports/]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH            # seulement sur la branche principale (lent)
+
+recette:
+  stage: recette
+  script: echo "Deploiement de l'image $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA en recette"
+  environment:
+    name: recette
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+production:
+  stage: production
+  script: echo "Deploiement de l'image $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA en production"
+  environment:
+    name: production
+  when: manual                                             # un humain decide de la mise en production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
