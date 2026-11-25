@@ -3,6 +3,8 @@
 Application bancaire (clients, comptes, opérations, virements) utilisée dans les six TP du module.
 Elle fonctionne… mais elle est peu testée, et elle contient des bugs. À vous de les trouver.
 
+Diapositives et sujets de TP : branche [`supports`](https://github.com/ctiber/r402/tree/supports) de ce dépôt.
+
 ## Prérequis
 
 - Java 21
