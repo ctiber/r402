@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Connexion - Ma banque</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <header><h1>Ma banque</h1></header>
+  <main>
+    <section class="connexion">
+      <h2>Connexion</h2>
+      <p id="message-erreur" class="message erreur" role="alert" hidden>Identifiant ou mot de passe incorrect.</p>
+      <p id="message-deconnexion" class="message succes" role="status" hidden>Vous êtes déconnecté.</p>
+      <form method="post" action="/connexion" id="formulaire-connexion">
+        <label for="identifiant">Identifiant</label>
+        <input id="identifiant" name="username" autocomplete="username" required>
+        <label for="mot-de-passe">Mot de passe</label>
+        <input id="mot-de-passe" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit" class="principal">Se connecter</button>
+      </form>
+    </section>
+  </main>
+  <script>
+    const parametres = new URLSearchParams(location.search);
+    document.getElementById('message-erreur').hidden = !parametres.has('erreur');
+    document.getElementById('message-deconnexion').hidden = !parametres.has('deconnecte');
+    // Connexion envoyee avec le jeton CSRF (cookie XSRF-TOKEN recopie dans l'en-tete X-XSRF-TOKEN)
+    const formulaire = document.getElementById('formulaire-connexion');
+    formulaire.addEventListener('submit', async (evenement) => {
+      evenement.preventDefault();
+      const cookie = document.cookie.split('; ').find(c => c.startsWith('XSRF-TOKEN='));
+      const reponse = await fetch('/connexion', {
+        method: 'POST',
+        headers: { 'X-XSRF-TOKEN': cookie ? decodeURIComponent(cookie.split('=')[1]) : '' },
+        body: new URLSearchParams(new FormData(formulaire))
+      });
+      // Le serveur redirige vers / si la connexion reussit, vers connexion.html?erreur sinon
+      location.href = reponse.url;
+    });
+  </script>
+</body>
+</html>

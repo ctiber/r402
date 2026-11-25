@@ -1,0 +1,10 @@
+# Base de DEVELOPPEMENT (jamais utilisee par les tests, qui ont leur propre base dans Docker)
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: banque
+      POSTGRES_USER: banque
+      POSTGRES_PASSWORD: banque
+    ports:
+      - "5432:5432"
