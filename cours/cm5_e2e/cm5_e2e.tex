@@ -1,0 +1,436 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\input{../../latex/common/r402-slides-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{img/}}
+
+\title{Tests de bout en bout et tests d'interface}
+\author[C. Tibermacine]{Chouki Tibermacine}
+\date{}
+
+\tikzset{
+  comp/.style={rectangle, rounded corners=2pt, draw=qaaccent, thick, fill=qapanel, text=qatext,
+    minimum height=0.6cm, minimum width=2.3cm, align=center, font=\scriptsize},
+  arr/.style={-Latex, qamuted, thick}
+}
+
+\begin{document}
+
+\rtitleslide{5}{Tests de bout en bout et tests d'interface}
+
+\begin{frame}{Où en est-on ?}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item CM1, CM3 : la logique métier, en unitaire
+        \item CM2 : les critères d'acceptation, exécutables
+        \item CM4 : le serveur entier, jusqu'à la base
+        \item Il reste une partie de l'application qu'aucun test n'a vue : \textbf{le navigateur}
+          \begin{itemize}
+            \item le code JavaScript du front Vue
+            \item le dialogue entre le front et l'API
+            \item ce que l'utilisateur voit et fait réellement
+          \end{itemize}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[x=0.8cm, y=1cm]
+        \fill[qaaccent!35!qapanel] (0,0) -- (6,0) -- (4.6,1.4) -- (1.4,1.4) -- cycle;
+        \fill[qaaccent!35!qapanel] (1.4,1.4) -- (4.6,1.4) -- (3.7,2.3) -- (2.3,2.3) -- cycle;
+        \fill[qaaccent2] (2.3,2.3) -- (3.7,2.3) -- (3,3.0) -- cycle;
+        \node[font=\small\bfseries, text=qatext] at (3,0.7) {Unitaires};
+        \node[font=\scriptsize\bfseries, text=qatext] at (3,1.85) {Intégration};
+        \node[font=\tiny\bfseries, text=qabg] at (3,2.55) {E2E};
+        \draw[arr, qaaccent2] (5.4,2.6) -- (3.8,2.6);
+        \node[font=\scriptsize, text=qaaccent2, anchor=west] at (5.4,2.6) {CM5};
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Les tests de bout en bout}
+
+\begin{frame}{Un test de bout en bout}
+  \begin{center}
+  \begin{tikzpicture}[node distance=0.55cm]
+    \node[comp, draw=qaaccent2] (test) {Test\\{\tiny\color{qamuted}Playwright}};
+    \node[comp, right=of test] (nav) {Navigateur\\{\tiny\color{qamuted}Chromium, Firefox\ldots}};
+    \node[comp, right=of nav] (front) {Front Vue\\{\tiny\color{qamuted}JavaScript}};
+    \node[comp, right=of front] (api) {API REST\\{\tiny\color{qamuted}Spring Boot}};
+    \node[comp, right=of api] (db) {PostgreSQL};
+    \draw[arr, qaaccent2] (test) -- node[above, font=\tiny, text=qamuted] {pilote} (nav);
+    \draw[arr] (nav) -- (front);
+    \draw[arr] (front) -- node[above, font=\tiny, text=qamuted] {HTTP} (api);
+    \draw[arr] (api) -- (db);
+  \end{tikzpicture}
+  \end{center}
+  \vspace{2mm}
+  \begin{itemize}
+    \item Le test \textbf{pilote un vrai navigateur}, comme un utilisateur : il ouvre la page, remplit un formulaire, clique, lit ce qui s'affiche
+    \item Toute l'application est réelle : aucune doublure (sauf, parfois, les services externes payants)
+    \item Il vérifie un \textbf{parcours} : « se connecter, faire un virement, voir le nouveau solde »
+    \item Il est souvent fonctionnel et boîte noire : il ne connaît que ce qui est à l'écran
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Le prix à payer}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{alertblock}{Coûteux}
+        \begin{itemize}
+          \item \textbf{Lents} : démarrer l'application et un navigateur, attendre chaque page (secondes par test)
+          \item \textbf{Difficiles à diagnostiquer} : « le solde affiché est faux », mais à cause de quelle couche ?
+          \item \textbf{Fragiles} : un libellé ou une mise en page change, le test casse
+        \end{itemize}
+      \end{alertblock}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{exampleblock}{Donc peu nombreux et bien choisis}
+        \begin{itemize}
+          \item Les \textbf{parcours critiques} : ceux qui coûtent cher s'ils cassent
+          \item Pour la banque : se connecter, consulter ses comptes, faire un virement, être averti d'un refus
+          \item Pas un test par règle métier : les règles sont déjà testées plus bas dans la pyramide
+        \end{itemize}
+      \end{exampleblock}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Les tests instables (\textit{flaky tests})}
+  \begin{itemize}
+    \item Un test \textbf{instable} passe ou échoue \textbf{sans que le code ait changé}
+    \item Causes fréquentes en bout en bout :
+      \begin{itemize}
+        \item le \textbf{temps} : on lit la page avant que le serveur ait répondu, avant la fin d'une animation
+        \item les \textbf{données} : un test précédent a modifié les comptes
+        \item l'\textbf{environnement} : machine de CI plus lente, réseau, fuseau horaire, langue du navigateur
+      \end{itemize}
+    \item Conséquence : l'équipe prend l'habitude de « relancer jusqu'à ce que ça passe »\ldots
+      \begin{itemize}
+        \item et ne croit plus aux tests, même quand ils signalent un vrai bug
+      \end{itemize}
+  \end{itemize}
+  \vspace{2mm}
+  \begin{datacard}
+    \small Un test instable n'est pas un test « un peu rouge » : c'est un test \alert{à réparer en priorité}, ou à supprimer.
+  \end{datacard}
+\end{frame}
+
+\begin{frame}{Trois outils libres et gratuits}
+  \footnotesize
+  \begin{datacard}
+    \begin{tabular}{@{}p{2.3cm}p{3.1cm}p{3.1cm}p{3.3cm}@{}}
+      \toprule
+      & \textbf{Selenium} & \textbf{Cypress} & \textbf{Playwright} \\
+      \midrule
+      Depuis & 2004 & 2017 & 2020 (Microsoft) \\[0.5mm]
+      Langages & Java, Python, C\#, JS\ldots & JavaScript / TypeScript & Java, Python, C\#, JS / TS \\[0.5mm]
+      Navigateurs & tous (WebDriver) & Chromium, Firefox & Chromium, Firefox, WebKit \\[0.5mm]
+      Attente automatique & non : à écrire soi-même & oui & oui \\[0.5mm]
+      Outils & Selenium IDE, Grid & exécution interactive & générateur de code, \textit{trace viewer} \\[0.5mm]
+      Aujourd'hui & très présent dans l'existant & stable, en perte de vitesse & \textbf{le plus adopté} pour les nouveaux projets \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{2mm}
+  \small
+  \begin{itemize}
+    \item Ici : \textbf{Playwright for Java}, dans le même projet Maven, avec JUnit, AssertJ et Cucumber
+    \item Les principes de ce cours (sélecteurs, attentes, Page Object) valent pour les trois outils
+  \end{itemize}
+\end{frame}
+
+% ================================================================
+\section{Écrire des tests d'interface robustes}
+
+\begin{frame}[fragile]{Un premier test Playwright}
+  \begin{columns}[T]
+    \begin{column}{0.64\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@Test
+void virementAccepte_lesSoldesSontMisAJour() {
+  page.navigate(url() + "/");
+
+  page.getByTestId("virement-source").selectOption("FR76-001");
+  page.getByTestId("virement-cible").selectOption("FR76-002");
+  page.getByLabel("Montant (€)").fill("150");
+  page.getByRole(AriaRole.BUTTON,
+      new Page.GetByRoleOptions().setName("Virer")).click();
+
+  assertThat(page.getByTestId("message"))
+      .hasText("Virement effectué");
+  assertThat(page.getByTestId("solde-FR76-001"))
+      .hasText("350.00 €");
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.33\textwidth}
+      \small
+      \begin{itemize}
+        \item \texttt{page} : un onglet neuf pour chaque test
+        \item \texttt{getBy\ldots} : trouver un élément (un \textit{locator})
+        \item \texttt{selectOption}, \texttt{fill}, \texttt{click} : agir comme l'utilisateur
+        \item \texttt{assertThat(locator)} : assertions de Playwright, qui \textbf{attendent} que la condition soit vraie
+        \item L'application tourne sur un port aléatoire (\texttt{RANDOM\_PORT})
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Trouver les éléments : des sélecteurs robustes}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{alertblock}{Fragile : lié à la structure de la page}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+page.locator("form select:nth-child(2)")
+page.locator("div > div:nth-child(3) button")
+page.locator("//table/tbody/tr[1]/td[3]")
+page.locator(".btn.btn-primary.mt-2")
+\end{lstlisting}
+        \small On ajoute un champ, on change une classe CSS : tout casse.
+      \end{alertblock}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{exampleblock}{Robuste : lié à ce que voit l'utilisateur}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+page.getByRole(AriaRole.BUTTON,
+    new GetByRoleOptions().setName("Virer"))
+page.getByLabel("Montant (€)")
+page.getByText("Solde insuffisant")
+page.getByTestId("solde-FR76-001")
+\end{lstlisting}
+      \end{exampleblock}
+    \end{column}
+  \end{columns}
+  \vspace{2mm}
+  \small
+  \begin{itemize}
+    \item Ordre de préférence : \textbf{rôle} et nom accessible, puis \textbf{libellé}, \textbf{texte}, et en dernier recours un attribut \texttt{data-testid} ajouté exprès pour les tests
+    \item Bonus : si \texttt{getByRole} ne trouve pas le bouton, c'est souvent que la page est \textbf{mal accessible} (un \texttt{<div>} cliquable au lieu d'un \texttt{<button>})
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Attendre correctement}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{alertblock}{À éviter}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+bouton.click();
+// lu tout de suite : le serveur n'a pas répondu
+String msg = page.locator("#message").textContent();
+assertThat(msg).isEqualTo("Virement effectué");
+
+bouton.click();
+Thread.sleep(2000);   // assez ? trop ? sur la CI ?
+\end{lstlisting}
+      \end{alertblock}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{exampleblock}{À faire}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+bouton.click();
+assertThat(page.getByTestId("message"))
+    .hasText("Virement effectué");
+\end{lstlisting}
+      \end{exampleblock}
+      \small
+      \begin{itemize}
+        \item Les \textbf{actions} attendent que l'élément soit visible, activé, stable
+        \item Les \textbf{assertions} \texttt{assertThat(locator)} réessaient jusqu'à ce que la condition soit vraie (5 s par défaut)
+        \item \texttt{Thread.sleep} : trop court, le test est instable ; trop long, la suite est lente
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Le patron Page Object}
+  \begin{columns}[T]
+    \begin{column}{0.62\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+public class PageComptes {
+  private final Page page;
+
+  public PageComptes virer(String source, String cible, String montant) {
+    page.getByTestId("virement-source").selectOption(source);
+    page.getByTestId("virement-cible").selectOption(cible);
+    page.getByLabel("Montant (€)").fill(montant);
+    page.getByRole(BUTTON, new GetByRoleOptions().setName("Virer")).click();
+    return this;
+  }
+  public Locator message() { return page.getByTestId("message"); }
+  public Locator solde(String numero) { ... }
+}
+
+// dans le test
+comptes.virer("FR76-001", "FR76-002", "150");
+assertThat(comptes.message()).hasText("Virement effectué");
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.35\textwidth}
+      \small
+      \begin{itemize}
+        \item Une classe par écran (ou composant), qui \textbf{cache} les sélecteurs et expose des actions métier
+        \item Les tests se lisent comme un scénario
+        \item La page change ? On corrige \textbf{une} classe, pas trente tests
+        \item Pas d'assertions dans le Page Object : il décrit l'écran, le test décide de ce qui est attendu
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Données et isolation}
+  \begin{itemize}
+    \item Les mêmes règles qu'au CM4, en plus difficile : le navigateur et le serveur sont deux processus, \textbf{pas de rollback} automatique
+    \item Avant chaque test, remettre l'application dans un état connu :
+      \begin{itemize}
+        \item base de test neuve (Testcontainers) et jeu de données chargé avant chaque test
+        \item ou un point d'accès réservé aux tests (\texttt{POST /api/test/reinitialiser}), désactivé en production
+      \end{itemize}
+    \item Chaque test crée ou utilise \textbf{ses} comptes : deux tests qui virent depuis le même compte se gênent si on les exécute en parallèle
+    \item Un nouvel onglet propre (\texttt{BrowserContext}) par test : pas de cookies ni de session hérités
+    \item Ne pas passer par l'interface pour préparer les données (lent) : utiliser l'API ou la base, et réserver l'interface à l'action testée
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Déboguer un test d'interface}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{itemize}
+        \item \textbf{Mode visible} (\textit{headed}) et ralenti (\texttt{setSlowMo}) : on regarde le test jouer
+        \item \textbf{Générateur de code} (\texttt{codegen}) : on clique dans la page, Playwright écrit le code Java
+          \begin{itemize}
+            \item bon point de départ\ldots{} à nettoyer (Page Object, assertions)
+          \end{itemize}
+        \item Captures d'écran et vidéos en cas d'échec
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Le \textit{trace viewer}}
+        \begin{itemize}
+          \item Une trace (\texttt{.zip}) enregistre chaque action, une capture du DOM avant et après, la console et les requêtes réseau
+          \item On la rejoue pas à pas, après coup
+          \item Indispensable quand le test échoue \textbf{en CI}, sur une machine qu'on ne voit pas (CM6)
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{center}
+    \small En CI, le navigateur tourne sans fenêtre (\textit{headless}) : c'est le mode par défaut.
+  \end{center}
+\end{frame}
+
+\begin{frame}[fragile]{Retour au CM2 : le même scénario, dans le navigateur}
+  \begin{columns}[T]
+    \begin{column}{0.44\textwidth}
+\begin{lstlisting}[language={}, basicstyle=\lstcode\scriptsize]
+Scénario: virement accepté
+  Étant donné un compte "FR76-001"
+    avec un solde de 500,00 €
+  Quand le client vire 150,00 €
+    de "FR76-001" vers "FR76-002"
+  Alors le solde de "FR76-001"
+    est de 350,00 €
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.53\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@When("le client vire {bigdecimal} € de {string} vers {string}")
+public void vire(BigDecimal montant, String source, String cible) {
+    pageComptes.virer(source, cible, montant.toPlainString());
+}
+
+@Then("le solde de {string} est de {bigdecimal} €")
+public void soldeEst(String numero, BigDecimal attendu) {
+    assertThat(pageComptes.solde(numero))
+        .hasText(attendu.setScale(2) + " €");
+}
+\end{lstlisting}
+    \end{column}
+  \end{columns}
+  \vspace{2mm}
+  \small
+  \begin{itemize}
+    \item Le fichier \texttt{.feature} ne change pas : seules les \textit{step definitions} passent par l'interface, via le Page Object
+    \item On choisit les scénarios qui méritent ce niveau : en général, un ou deux par fonctionnalité
+  \end{itemize}
+\end{frame}
+
+\rdemo{1}{Un test qui pilote le navigateur}{%
+  \item Le test joue sous nos yeux (mode visible, ralenti)
+  \item La version « fragile » : sélecteurs \texttt{nth-child}, texte lu trop tôt\ldots{} rouge, alors que l'application marche
+  \item Le \textit{trace viewer} : rejouer le test pas à pas, voir l'écran au moment de l'échec
+  \item \textit{Si le temps le permet} : \texttt{codegen} écrit le test pendant qu'on clique
+}{\texttt{VirementE2ETest}\\\texttt{FragileE2ETest}\\\texttt{pages/PageComptes}\\[1mm]\texttt{target/traces/*.zip}}
+
+% ================================================================
+\section{Ouverture : utilisabilité et accessibilité}
+
+\begin{frame}{Tester l'utilisabilité}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item Un test automatique vérifie que le virement \textbf{fonctionne} ; il ne dit pas si un client \textbf{réussit} à le faire
+        \item \textbf{Test utilisateur} : on observe de vrais utilisateurs réaliser des tâches (« virez 50 \euro{} à votre fils »)
+          \begin{itemize}
+            \item on mesure : réussite, temps, erreurs, hésitations
+            \item ils pensent à voix haute ; on n'aide pas
+            \item cinq utilisateurs révèlent déjà la plupart des gros problèmes (Nielsen)
+          \end{itemize}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{Quelques heuristiques de Nielsen}
+        \small
+        \begin{itemize}
+          \item Rendre visible l'état du système (« virement en cours\ldots »)
+          \item Parler la langue de l'utilisateur (pas « erreur 422 »)
+          \item Prévenir les erreurs (confirmation au-delà de 1\,000 \euro{})
+          \item Permettre d'annuler
+          \item Aider à comprendre et corriger une erreur
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{L'accessibilité}
+  \begin{itemize}
+    \item Utilisable par tous : lecteur d'écran, clavier seul, malvoyance, daltonisme, troubles cognitifs\ldots
+    \item Une \textbf{obligation légale} :
+      \begin{itemize}
+        \item référentiel français \textbf{RGAA} (fondé sur les WCAG internationales)
+        \item depuis juin 2025, la directive européenne sur l'accessibilité s'applique aussi à des services privés, dont les \textbf{services bancaires} en ligne
+      \end{itemize}
+    \item Ce qui s'automatise : contrastes, textes alternatifs, libellés de champs, structure des titres
+      \begin{itemize}
+        \item outils : axe-core (utilisable depuis Playwright), Lighthouse dans le navigateur
+        \item ils ne détectent qu'une \textbf{partie} des problèmes : le reste demande des tests manuels (clavier, lecteur d'écran)
+      \end{itemize}
+    \item Les sélecteurs \texttt{getByRole} et \texttt{getByLabel} ne fonctionnent que sur une page correctement balisée : de bons tests poussent vers une meilleure accessibilité
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{À retenir}
+  \small
+  \begin{itemize}
+    \item Un test de bout en bout pilote un \textbf{vrai navigateur} sur l'application entière : réaliste, mais lent, fragile et coûteux à diagnostiquer
+    \item Peu nombreux : les \textbf{parcours critiques} ; les règles métier restent testées plus bas
+    \item Un test instable est à réparer en priorité : sinon plus personne ne croit aux tests
+    \item Playwright : \texttt{getByRole}, \texttt{getByLabel}, \texttt{getByTestId} plutôt que des sélecteurs CSS ou XPath liés à la structure
+    \item Jamais de \texttt{Thread.sleep} : actions et assertions \texttt{assertThat(locator)} \textbf{attendent} toutes seules
+    \item \textbf{Page Object} : une classe par écran, qui cache les sélecteurs
+    \item Données remises dans un état connu avant chaque test ; un contexte de navigateur neuf par test
+    \item Mode visible, \texttt{codegen} et \textit{trace viewer} pour écrire et déboguer
+    \item Fonctionner ne suffit pas : utilisabilité et accessibilité se testent aussi
+  \end{itemize}
+  \vspace{1mm}
+  \begin{exampleblock}{TP5}
+    Tester le front Vue du projet fil rouge avec Playwright.
+  \end{exampleblock}
+\end{frame}
+
+\rquestionslide
+
+\end{document}

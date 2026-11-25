@@ -1,0 +1,816 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\input{../../latex/common/r402-slides-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{img/}}
+
+\title{Qualité logicielle et panorama des tests}
+\author[C. Tibermacine]{Chouki Tibermacine}
+\date{}
+
+\lstdefinestyle{sortie}{language={}, basicstyle=\lstcode\scriptsize, keywordstyle={}, commentstyle={}, stringstyle={},
+  literate={é}{{\'e}}1 {è}{{\`e}}1 {ô}{{\^o}}1 {€}{{\euro{}}}1
+           {✔}{{\textcolor{qacodestr}{$\checkmark$}}}1 {✘}{{\textcolor{qaaccent}{$\times$}}}1}
+
+\tikzset{
+  layer/.style={rectangle, rounded corners=2pt, draw=qaaccent, thick, fill=qapanel, text=qatext,
+    minimum height=0.55cm, minimum width=3.6cm, align=center, font=\scriptsize},
+  ext/.style={rectangle, rounded corners=2pt, draw=qaaccent2, thick, dashed, fill=qapanelalt, text=qatext,
+    minimum height=0.5cm, minimum width=2.4cm, align=center, font=\scriptsize},
+  tag/.style={rectangle, rounded corners=6pt, fill=qaaccent2, text=qabg, font=\tiny\bfseries,
+    inner sep=2pt},
+  arr/.style={-Latex, qamuted, thick}
+}
+
+\begin{document}
+
+\rtitleslide{1}{Qualité logicielle et panorama des tests}
+
+\begin{frame}{Objectifs du module R4.02}
+  \begin{itemize}
+    \item Aller plus loin que les tests unitaires JUnit de BUT1 :
+      \begin{itemize}
+        \item partir du \textbf{besoin} (user stories) pour écrire des \textbf{tests d'acceptation}
+        \item \textbf{isoler} le code testé avec des doublures (\textit{mocks})
+        \item tester l'\textbf{intégration} avec une vraie base de données
+        \item tester l'application \textbf{de bout en bout}, depuis le navigateur
+        \item faire exécuter tous ces tests \textbf{automatiquement} à chaque modification (CI)
+      \end{itemize}
+    \item Savoir juger si un projet (ou une fonctionnalité) est \textbf{faisable} et \textbf{testable}
+    \item Un fil rouge : l'application bancaire que vous connaissez depuis R3.07
+  \end{itemize}
+  \vspace{3mm}
+  \begin{datacard}
+    \small user story $\rightarrow$ critères d'acceptation $\rightarrow$ tests unitaires $\rightarrow$ tests d'intégration $\rightarrow$ tests de bout en bout $\rightarrow$ pipeline de CI
+  \end{datacard}
+\end{frame}
+
+% ================================================================
+\section{Pourquoi tester ?}
+
+\begin{frame}{Trois incidents célèbres}
+  \begin{columns}[T]
+    \begin{column}{0.32\textwidth}
+      \begin{block}{Ariane 5, vol 501 (1996)}
+        \footnotesize
+        \begin{itemize}
+          \item Explosion 37 s après le décollage
+          \item Un nombre flottant 64 bits converti en entier 16 bits : \alert{dépassement}
+          \item Code \textbf{réutilisé d'Ariane 4}, jamais testé avec la trajectoire d'Ariane 5
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{block}{Knight Capital (2012)}
+        \footnotesize
+        \begin{itemize}
+          \item Société de trading : \alert{440 M\$ perdus en 45 min}
+          \item Nouveau code déployé sur 7 serveurs sur 8 ; le 8\textsuperscript{e} exécute un \textbf{vieux code mort} réactivé par un drapeau réutilisé
+          \item Déploiement manuel, sans vérification automatique
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{block}{CrowdStrike (juillet 2024)}
+        \footnotesize
+        \begin{itemize}
+          \item Une mise à jour de configuration d'un logiciel de sécurité
+          \item \alert{8,5 millions de PC Windows} bloqués (écran bleu) : aéroports, hôpitaux, banques
+          \item Lecture hors des limites d'un tableau, non détectée par le validateur ; mise à jour envoyée à \textbf{tout le monde en même temps}
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{center}
+    \small Points communs : du code \textbf{réutilisé} ou \textbf{modifié} sans être re-testé dans son nouveau contexte, et des déploiements sans filet.
+  \end{center}
+\end{frame}
+
+\begin{frame}{Plus un bug est trouvé tard, plus il coûte cher}
+  \begin{columns}[c]
+    \begin{column}{0.58\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[x=1cm, y=1cm]
+        \draw[qaline] (0,0) -- (6.6,0);
+        \foreach \i/\h/\l in {0/0.25/Exigences, 1/0.45/Conception, 2/0.75/Code, 3/1.3/Tests, 4/2.1/Recette, 5/3.4/Production} {
+          \fill[qaaccent!70!qapanel] (\i*1.1+0.15,0) rectangle (\i*1.1+0.85,\h);
+          \node[font=\tiny, text=qamuted, anchor=north] at (\i*1.1+0.5,-0.05) {\l};
+        }
+        \fill[qaaccent2] (5*1.1+0.15,0) rectangle (5*1.1+0.85,3.4);
+        \node[font=\scriptsize, text=qamuted, rotate=90, anchor=south] at (-0.15,1.7) {coût de correction};
+      \end{tikzpicture}
+      \end{center}
+      \source{Ordre de grandeur popularisé par Boehm (1981). Les chiffres exacts sont discutés, la tendance ne l'est pas.}
+    \end{column}
+    \begin{column}{0.40\textwidth}
+      \begin{itemize}
+        \item En production, un bug coûte :
+          \begin{itemize}
+            \item le diagnostic (souvent sans accès au contexte)
+            \item la correction \textbf{et} un nouveau déploiement
+            \item les données à réparer, la confiance des clients
+          \end{itemize}
+        \item Tester tôt et souvent $=$ \alert{décaler la détection vers la gauche} (\textit{shift left})
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Qu'est-ce qu'un logiciel de qualité ? (ISO/IEC 25010)}
+  \small
+  \begin{columns}[T]
+    \begin{column}{0.32\textwidth}
+      \begin{datacard}
+        \textbf{\color{qaaccent}Adéquation fonctionnelle}\\[-0.5mm]
+        {\scriptsize\color{qamuted} fait ce qui est demandé, correctement}
+      \end{datacard}
+      \begin{datacard}
+        \textbf{\color{qaaccent}Fiabilité}\\[-0.5mm]
+        {\scriptsize\color{qamuted} fonctionne dans la durée, résiste aux pannes}
+      \end{datacard}
+      \begin{datacard}
+        \textbf{Efficacité de performance}\\[-0.5mm]
+        {\scriptsize\color{qamuted} temps de réponse, ressources}
+      \end{datacard}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{datacard}
+        \textbf{\color{qaaccent}Maintenabilité}\\[-0.5mm]
+        {\scriptsize\color{qamuted} facile à modifier\ldots{} et à \textbf{tester}}
+      \end{datacard}
+      \begin{datacard}
+        \textbf{Sécurité}\\[-0.5mm]
+        {\scriptsize\color{qamuted} confidentialité, intégrité}
+      \end{datacard}
+      \begin{datacard}
+        \textbf{Capacité d'interaction}\\[-0.5mm]
+        {\scriptsize\color{qamuted} utilisabilité, accessibilité}
+      \end{datacard}
+    \end{column}
+    \begin{column}{0.32\textwidth}
+      \begin{datacard}
+        \textbf{Compatibilité}\\[-0.5mm]
+        {\scriptsize\color{qamuted} coexiste et échange avec d'autres systèmes}
+      \end{datacard}
+      \begin{datacard}
+        \textbf{Flexibilité}\\[-0.5mm]
+        {\scriptsize\color{qamuted} s'adapte, s'installe ailleurs}
+      \end{datacard}
+      \begin{datacard}
+        \textbf{Sûreté}\\[-0.5mm]
+        {\scriptsize\color{qamuted} ne met personne en danger}
+      \end{datacard}
+    \end{column}
+  \end{columns}
+  \vspace{2mm}
+  \begin{center}
+    Les tests touchent presque toutes ces caractéristiques ; ce module insiste sur celles \textcolor{qaaccent}{en violet}.
+  \end{center}
+\end{frame}
+
+\begin{frame}{Vérification et validation}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Vérification}
+        \textit{« Construisons-nous le produit correctement ? »}
+        \begin{itemize}
+          \item Le code respecte-t-il sa spécification ?
+          \item Tests unitaires, tests d'intégration
+          \item Question posée aux \textbf{développeurs}
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Validation}
+        \textit{« Construisons-nous le bon produit ? »}
+        \begin{itemize}
+          \item Le produit répond-il au besoin réel ?
+          \item Tests d'acceptation, recette, tests utilisateurs
+          \item Question posée au \textbf{client}
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{4mm}
+  \begin{itemize}
+    \item Un code parfaitement vérifié peut être inutile s'il implémente le mauvais besoin
+    \item Le CM2 partira du besoin (user stories) pour écrire des tests de \textbf{validation}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Ce qu'un test peut prouver\ldots{} et ce qu'il ne peut pas}
+  \begin{center}
+    \begin{datacard}
+      \textit{« Tester un programme peut montrer la présence de bugs,\\ jamais leur absence. »}\\[1mm]
+      {\scriptsize\color{qamuted} Edsger W. Dijkstra, 1970}
+    \end{datacard}
+  \end{center}
+  \begin{itemize}
+    \item Tester tous les cas est impossible : une méthode \texttt{f(int a, int b)} a $2^{64} \approx 1{,}8 \times 10^{19}$ combinaisons d'entrées
+    \item Tester, c'est donc \textbf{choisir} un petit nombre de cas représentatifs
+      \begin{itemize}
+        \item les cas \textbf{nominaux} (ce qui doit marcher)
+        \item les cas \textbf{limites} (0, solde exact, liste vide\ldots)
+        \item les cas d'\textbf{erreur} (montant négatif, compte inexistant\ldots)
+      \end{itemize}
+    \item Un test vert donne de la \textbf{confiance}, pas une preuve
+  \end{itemize}
+\end{frame}
+
+% ================================================================
+\section{Panorama des tests}
+
+\begin{frame}{Les niveaux de tests}
+  \small
+  \begin{datacard}
+    \begin{tabular}{@{}p{2.6cm}p{6.0cm}p{3.6cm}@{}}
+      \toprule
+      \textbf{Niveau} & \textbf{Ce qu'on teste} & \textbf{Dans ce module} \\
+      \midrule
+      \textbf{Unitaire} & une classe ou une méthode, \textbf{isolée} du reste & JUnit, Mockito (TP1, TP3) \\
+      \textbf{Intégration} & plusieurs composants ensemble : code + base de données, code + API & Testcontainers, Spring (TP4) \\
+      \textbf{Système / bout en bout} & l'application complète, comme un utilisateur, depuis le navigateur & Playwright (TP5) \\
+      \textbf{Acceptation} & le besoin du client est-il satisfait ? & Cucumber (TP2), recette \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{2mm}
+  \begin{itemize}
+    \item Plus on monte : plus c'est \textbf{réaliste}, mais plus c'est \textbf{lent}, \textbf{fragile} et \textbf{difficile à diagnostiquer}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Les types de tests}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Selon ce qu'on vérifie}
+        \begin{itemize}
+          \item \textbf{Fonctionnels} : le résultat est-il correct ?
+          \item \textbf{Non fonctionnels} :
+            \begin{itemize}
+              \item performance, montée en charge
+              \item sécurité
+              \item utilisabilité, accessibilité
+            \end{itemize}
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Selon ce qu'on connaît du code}
+        \begin{itemize}
+          \item \textbf{Boîte noire} : on ne regarde que la spécification (entrées et sorties attendues)
+          \item \textbf{Boîte blanche} : on s'appuie sur le code (chaque branche d'un \texttt{if} est-elle exécutée ?)
+            \begin{itemize}
+              \item mesuré par la \textbf{couverture} (CM6)
+            \end{itemize}
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{itemize}
+    \item Les deux axes se combinent : un test de bout en bout est en général fonctionnel et boîte noire
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Quel niveau ? Quel type ?}
+  \small
+  \begin{enumerate}
+    \item Vérifier que \texttt{calculerInterets()} renvoie 2\,\% du solde
+      \uncover<2->{\hfill \alert{unitaire, fonctionnel}}
+    \item Vérifier que \texttt{CompteRepository.findByClient()} renvoie les bons comptes depuis PostgreSQL
+      \uncover<2->{\hfill \alert{intégration}}
+    \item Se connecter dans le navigateur, faire un virement, voir le nouveau solde affiché
+      \uncover<2->{\hfill \alert{bout en bout}}
+    \item Le conseiller vérifie la règle « un virement de plus de 1\,000\,\euro{} demande une confirmation »
+      \uncover<2->{\hfill \alert{acceptation}}
+    \item La page des comptes s'affiche en moins de 2 s avec 1\,000 utilisateurs connectés
+      \uncover<2->{\hfill \alert{non fonctionnel (performance)}}
+    \item Après une correction dans \texttt{Compte}, relancer tous les tests existants
+      \uncover<2->{\hfill \alert{non-régression}}
+  \end{enumerate}
+\end{frame}
+
+\begin{frame}{La pyramide des tests}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[x=0.85cm, y=1cm]
+        \fill[qaaccent!35!qapanel] (0,0) -- (6,0) -- (4.6,1.4) -- (1.4,1.4) -- cycle;
+        \fill[qaaccent!65!qapanel] (1.4,1.4) -- (4.6,1.4) -- (3.7,2.3) -- (2.3,2.3) -- cycle;
+        \fill[qaaccent2] (2.3,2.3) -- (3.7,2.3) -- (3,3.0) -- cycle;
+        \node[font=\small\bfseries, text=qatext] at (3,0.7) {Unitaires};
+        \node[font=\scriptsize\bfseries, text=qatext] at (3,1.85) {Intégration};
+        \node[font=\tiny\bfseries, text=qabg] at (3,2.55) {E2E};
+        \draw[arr] (6.4,0.1) -- node[right, font=\tiny, text=qamuted, align=left] {plus lents\\plus coûteux\\plus fragiles} (6.4,2.9);
+      \end{tikzpicture}
+      \end{center}
+      \source{Mike Cohn, \textit{Succeeding with Agile}, 2009}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{itemize}
+        \item \textbf{Beaucoup} de tests unitaires : rapides (des milliers en quelques secondes), précis quand ils échouent
+        \item \textbf{Moins} de tests d'intégration : ils vérifient que les morceaux s'assemblent
+        \item \textbf{Peu} de tests de bout en bout : les parcours essentiels de l'utilisateur
+        \item Chaque bug doit être attrapé \alert{au niveau le plus bas possible}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Variantes et anti-modèle}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Le trophée des tests}
+        \begin{itemize}
+          \item Proposé pour les applications web (Kent C. Dodds)
+          \item Met l'accent sur les tests d'\textbf{intégration} : c'est souvent là que les bugs se cachent (base, API, configuration)
+          \item Ajoute à la base l'\textbf{analyse statique} (typage, \textit{linter})
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{alertblock}{Le cornet de glace (anti-modèle)}
+        \begin{itemize}
+          \item La pyramide à l'envers : beaucoup de tests manuels et de bout en bout, presque pas de tests unitaires
+          \item Suite lente (des heures), fragile, qu'on finit par ne plus lancer
+          \item Fréquent quand on teste \og après coup \fg{} un code non conçu pour être testé
+        \end{itemize}
+      \end{alertblock}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{center}
+    La bonne forme dépend de l'application ; le principe reste : \textbf{des retours rapides} sur la majorité des erreurs.
+  \end{center}
+\end{frame}
+
+\begin{frame}{La non-régression}
+  \small
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+      \begin{itemize}
+        \item Une \textbf{régression} : une fonctionnalité qui marchait ne marche plus après une modification
+        \item Exemple :
+          \begin{enumerate}
+            \item semaine 1 : on corrige le calcul du plafond de retrait
+            \item semaine 3 : un collègue modifie le calcul des frais\ldots
+            \item \ldots{} et le plafond est de nouveau faux
+          \end{enumerate}
+        \item Les \textbf{tests de non-régression} : rejouer \alert{tous} les tests existants après \alert{chaque} modification
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.44\textwidth}
+      \begin{block}{Pourquoi automatiser ?}
+        \begin{itemize}
+          \item Rejouer à la main des centaines de cas à chaque modification : impossible
+          \item Automatisés, les tests deviennent un \textbf{filet de sécurité} qui permet de modifier le code sans peur
+          \item Lancés par la pipeline de CI à chaque \textit{push} (CM6)
+        \end{itemize}
+      \end{block}
+      \begin{exampleblock}{Règle d'or}
+        Un bug corrigé $=$ un test ajouté qui le reproduit
+      \end{exampleblock}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{JUnit : rappels et nouveautés}
+
+\begin{frame}[fragile]{Ce que vous savez déjà}
+  \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+class CompteTest {
+    private Compte compte;
+
+    @BeforeEach
+    void setUp() {
+        compte = new Compte("FR76-001", new BigDecimal("100.00"));
+    }
+
+    @Test
+    void crediter_augmenteLeSolde() {
+        compte.crediter(new BigDecimal("50.00"));
+        assertEquals(new BigDecimal("150.00"), compte.getSolde());
+    }
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}
+        \item JUnit Jupiter (JUnit 5, puis JUnit 6) : \texttt{org.junit.jupiter.api}
+        \item \texttt{@Test}, \texttt{@BeforeEach}, \texttt{@AfterEach}, \texttt{@BeforeAll}, \texttt{@AfterAll}
+        \item \texttt{assertEquals}, \texttt{assertTrue}, \texttt{assertNull}\ldots
+        \item Une \textbf{nouvelle instance} de la classe de test pour chaque méthode de test
+        \item Lancement : IDE ou \texttt{mvn test}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Structurer un test : Arrange, Act, Assert}
+  \begin{columns}[T]
+    \begin{column}{0.6\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@Test
+void debiter_soldeSuffisant_diminueLeSolde() {
+    // Arrange (Given) : préparer le contexte
+    Compte compte = new Compte("FR76-001",
+                               new BigDecimal("100.00"));
+
+    // Act (When) : UNE action
+    compte.debiter(new BigDecimal("30.00"));
+
+    // Assert (Then) : vérifier le résultat
+    assertEquals(new BigDecimal("70.00"),
+                 compte.getSolde());
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.37\textwidth}
+      \begin{itemize}
+        \item Trois blocs, toujours dans cet ordre
+        \item Une seule action testée par test
+        \item Équivalent BDD : \textbf{Given / When / Then} (CM2)
+        \item Nommer le test pour qu'il se lise comme une phrase :
+          \begin{itemize}
+            \item {\scriptsize\texttt{methode\_contexte\_resultat}}
+            \item ou \texttt{@DisplayName("...")}
+          \end{itemize}
+        \item Quand il échoue, le nom doit suffire à comprendre \textbf{ce qui} ne marche plus
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Les propriétés d'un bon test : FIRST}
+  \begin{datacard}
+    \begin{tabular}{@{}cl p{8.2cm}@{}}
+      \textbf{\color{qaaccent}\Large F} & \textbf{Fast} & rapide : quelques millisecondes, pour pouvoir lancer toute la suite souvent \\[1mm]
+      \textbf{\color{qaaccent}\Large I} & \textbf{Independent} & indépendant : ne dépend ni des autres tests, ni de leur ordre d'exécution \\[1mm]
+      \textbf{\color{qaaccent}\Large R} & \textbf{Repeatable} & reproductible : même résultat partout et à chaque fois (pas de date du jour, de hasard, de réseau\ldots) \\[1mm]
+      \textbf{\color{qaaccent}\Large S} & \textbf{Self-validating} & auto-vérifiant : vert ou rouge, sans lire de \texttt{println} \\[1mm]
+      \textbf{\color{qaaccent}\Large T} & \textbf{Timely} & écrit au bon moment : avec le code (voire avant), pas des mois après \\
+    \end{tabular}
+  \end{datacard}
+  \vspace{1mm}
+  \begin{itemize}\small
+    \item Les tests qui touchent une base, une horloge ou une API externe cassent souvent \textbf{I} et \textbf{R} : on verra comment les isoler (CM3) ou les maîtriser (CM4)
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Choisir ses cas de test : partitions et valeurs limites}
+  Spécification : \texttt{debiter(montant)} accepte un montant strictement positif et inférieur ou égal au solde.
+  \vspace{2mm}
+  \begin{center}
+  \begin{tikzpicture}[x=1cm, y=1cm]
+    \fill[qaaccent2!40!qapanel] (0,0) rectangle (3,0.6);
+    \fill[qaaccent!45!qapanel] (3,0) rectangle (8,0.6);
+    \fill[qaaccent2!40!qapanel] (8,0) rectangle (11,0.6);
+    \node[font=\scriptsize, text=qatext] at (1.5,0.3) {montant $\leq 0$ : refusé};
+    \node[font=\scriptsize, text=qatext] at (5.5,0.3) {$0 <$ montant $\leq$ solde : accepté};
+    \node[font=\scriptsize, text=qatext] at (9.5,0.3) {montant $>$ solde : refusé};
+    \foreach \x/\l in {2.35/-0.01, 3/0, 3.65/0.01, 7.35/99.99, 8/100.00, 8.65/100.01} {
+      \draw[qaaccent2, thick] (\x,-0.05) -- (\x,0.65);
+      \node[font=\tiny, text=qaaccent2, anchor=north] at (\x,-0.1) {\l};
+    }
+    \node[font=\tiny, text=qamuted] at (5.5,-0.55) {(solde = 100.00)};
+  \end{tikzpicture}
+  \end{center}
+  \begin{itemize}
+    \item \textbf{Partitions d'équivalence} : des classes d'entrées qui doivent se comporter pareil ; un cas par classe suffit
+    \item \textbf{Valeurs limites} : les bugs se cachent aux frontières (\texttt{<} au lieu de \texttt{<=}) ; tester de chaque côté
+    \item Ici : 3 partitions et 6 valeurs limites $\rightarrow$ un \textbf{test paramétré}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Tests paramétrés}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@ParameterizedTest(name = "débit de {0} refusé")
+@ValueSource(strings = {"0", "-0.01", "-10"})
+void debiter_montantNonPositif_refuse(String montant) {
+    Compte compte = new Compte("FR76-001", new BigDecimal("100.00"));
+    assertThrows(IllegalArgumentException.class, () -> compte.debiter(new BigDecimal(montant)));
+}
+
+@ParameterizedTest(name = "{0} - {1} = {2}")
+@CsvSource({
+    "100.00,  0.01, 99.99",
+    "100.00, 99.99,  0.01",
+    "100.00, 100.00, 0.00"     // cas limite : le solde tombe à zéro
+})
+void debiter_soldeSuffisant(BigDecimal initial, BigDecimal montant, BigDecimal attendu) {
+    Compte compte = new Compte("FR76-001", initial);
+    compte.debiter(montant);
+    assertEquals(attendu, compte.getSolde());
+}
+\end{lstlisting}
+  \small Autres sources : \texttt{@EnumSource}, \texttt{@MethodSource} (objets complexes), \texttt{@CsvFileSource}
+\end{frame}
+
+\rdemo{1}{Une valeur limite attrape un bug}{%
+  \item Lancer \texttt{CompteTest} : l'IDE affiche les tests comme une spécification
+  \item On glisse un bug dans \texttt{debiter} : \texttt{<} devient \texttt{<=}
+  \item Un seul test devient rouge : le cas \textbf{limite} où le solde tombe à 0
+  \item Tous les cas « au milieu » restent verts : sans la valeur limite, le bug passait
+}{\texttt{Compte}\\\texttt{CompteTest}}
+
+\begin{frame}[fragile]{Tester les exceptions}
+  \begin{columns}[T]
+    \begin{column}{0.6\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+// eur("50.00") : raccourci pour new BigDecimal("50.00")
+
+@Test
+void debiter_soldeInsuffisant_refuse() {
+  Compte compte = new Compte("FR76-001", eur("50.00"));
+
+  SoldeInsuffisantException e = assertThrows(
+      SoldeInsuffisantException.class,
+      () -> compte.debiter(eur("80.00")));
+
+  assertEquals("FR76-001", e.getNumeroCompte());
+  // et le solde n'a pas bougé
+  assertEquals(eur("50.00"), compte.getSolde());
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.37\textwidth}
+      \begin{itemize}
+        \item \texttt{assertThrows} échoue si \textbf{aucune} exception (ou une exception d'un autre type) n'est levée
+        \item Il renvoie l'exception : on peut l'inspecter (message, données)
+        \item Vérifier aussi que l'état n'a \textbf{pas changé} après l'erreur
+        \item \alert{À éviter} : \texttt{try \{ ... fail(); \} catch (...) \{\}}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Grouper les assertions : \texttt{assertAll}}
+  \begin{columns}[T]
+    \begin{column}{0.6\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@Test
+void nouveauCompte_estInitialise() {
+  Compte compte = new Compte("FR76-001", eur("100.00"));
+
+  assertAll("compte créé",
+    () -> assertEquals("FR76-001", compte.getNumero()),
+    () -> assertEquals(eur("100.00"), compte.getSolde()),
+    () -> assertTrue(compte.getOperations().isEmpty()));
+}
+\end{lstlisting}
+\begin{lstlisting}[style=sortie]
+compte créé (2 failures)
+  expected: <100.00> but was: <0.00>
+  expected: <true> but was: <false>
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.37\textwidth}
+      \begin{itemize}
+        \item Sans \texttt{assertAll}, le test s'arrête au \textbf{premier} échec : on corrige, on relance, on découvre le suivant\ldots
+        \item Avec \texttt{assertAll}, toutes les assertions sont exécutées et \textbf{tous} les échecs sont signalés
+        \item Utile pour vérifier plusieurs propriétés d'un même objet
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Organiser ses tests : \texttt{@Nested} et \texttt{@DisplayName}}
+  \begin{columns}[T]
+    \begin{column}{0.56\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@DisplayName("Un compte")
+class CompteTest {
+  @Nested @DisplayName("avec un solde de 100 €")
+  class SoldeDe100 {
+    Compte compte;
+
+    @BeforeEach void init() {
+      compte = new Compte("FR76-001", eur("100.00"));
+    }
+    @Test @DisplayName("accepte un débit de 30 €")
+    void debit30() { ... }
+    @Test @DisplayName("refuse un débit de 150 €")
+    void debit150() { ... }
+  }
+  @Nested @DisplayName("clôturé")
+  class Cloture { ... }
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      Rapport affiché par l'IDE :
+\begin{lstlisting}[style=sortie]
+Un compte
+  avec un solde de 100 €
+    ✔ accepte un débit de 30 €
+    ✔ refuse un débit de 150 €
+  clôturé
+    ✔ refuse tout débit
+    ✘ refuse tout crédit
+\end{lstlisting}
+      \begin{itemize}
+        \item Une classe imbriquée par \textbf{contexte}
+        \item Le \texttt{@BeforeEach} de chaque contexte prépare l'état
+        \item Les tests se lisent comme une \textbf{spécification}
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{AssertJ : des assertions plus lisibles}
+  \begin{columns}[T]
+    \begin{column}{0.56\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+import static org.assertj.core.api.Assertions.*;
+
+assertThat(compte.getSolde()).isEqualByComparingTo("70");
+
+assertThat(compte.getOperations())
+    .hasSize(2)
+    .extracting(Operation::getType)
+    .containsExactly(TypeOperation.CREDIT,
+                     TypeOperation.DEBIT);
+
+assertThatThrownBy(() -> compte.debiter(new BigDecimal("500")))
+    .isInstanceOf(SoldeInsuffisantException.class)
+    .hasMessageContaining("solde insuffisant");
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.42\textwidth}
+      \begin{itemize}
+        \item Se lit de gauche à droite : « \textit{vérifie que} X \textit{est}\ldots{} »
+        \item L'IDE propose les assertions adaptées au type (\texttt{.} puis complétion)
+        \item Des messages d'échec bien plus clairs :
+      \end{itemize}
+\begin{lstlisting}[style=sortie]
+assertTrue(types.contains(CREDIT));
+ -> expected: <true> but was: <false>
+
+assertThat(types).contains(CREDIT);
+ -> Expecting ArrayList:
+      [DEBIT]
+    to contain:
+      [CREDIT]
+\end{lstlisting}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Un piège classique : \texttt{BigDecimal} et \texttt{equals}}
+  \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+Compte compte = new Compte("FR76-001",
+                           new BigDecimal("100.00"));
+compte.debiter(new BigDecimal("30"));
+
+// ÉCHOUE : expected: <70> but was: <70.00>
+assertEquals(new BigDecimal("70"), compte.getSolde());
+
+// passe : compare la valeur, pas l'échelle
+assertEquals(0, new BigDecimal("70")
+                 .compareTo(compte.getSolde()));
+
+// passe, et plus lisible
+assertThat(compte.getSolde()).isEqualByComparingTo("70");
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.45\textwidth}
+      \begin{itemize}
+        \item \texttt{BigDecimal.equals} compare la valeur \textbf{et} le nombre de décimales : \texttt{70} $\neq$ \texttt{70.00}
+        \item Un test qui échoue n'indique pas toujours un bug du code : le \textbf{test} peut être faux
+        \item Toujours \textbf{voir un test échouer} au moins une fois, pour être sûr qu'il teste quelque chose
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\rdemo{2}{Lire un échec}{%
+  \item Cinq tests rouges exprès : comparer les messages d'échec
+  \item \texttt{assertTrue} : « expected true but was false »\ldots{} et alors ?
+  \item AssertJ : ce qu'on attendait \textbf{et} ce qu'on a obtenu
+  \item \texttt{70} contre \texttt{70.00} : c'est le test qui est faux
+  \item Avec et sans \texttt{assertAll} : un échec ou tous les échecs
+}{\texttt{MessagesEchecTest}}
+
+% ================================================================
+\section{Organisation du module et projet fil rouge}
+
+\begin{frame}{Six semaines : un cours, puis un TP}
+  \small
+  \begin{datacard}
+    \begin{tabular}{@{}clll@{}}
+      \toprule
+      \textbf{Sem.} & \textbf{Cours (45 min)} & \textbf{TP (1 h 30)} & \textbf{Fin de semaine} \\
+      \midrule
+      1 & Qualité et panorama des tests & JUnit avancé sur le projet & \\
+      2 & User stories, acceptation, faisabilité & Stories, grille de faisabilité, Cucumber & \\
+      3 & Testabilité et doublures de test & Mockito & \alert{Quiz 1} \\
+      4 & Tests d'intégration avec une base & Testcontainers, Spring, MockMvc & \\
+      5 & Tests de bout en bout & Playwright, Page Object & \\
+      6 & Environnements, CI, couverture & Pipeline GitLab CI, JaCoCo, PIT & \alert{Quiz 2} \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{2mm}
+  \begin{center}
+    Les deux quiz ont lieu dans des \textbf{séances à part} : ils ne prennent pas de temps sur les TP.
+  \end{center}
+\end{frame}
+
+\begin{frame}{Le projet fil rouge : l'application bancaire}
+  \begin{columns}[c]
+    \begin{column}{0.6\textwidth}
+      \begin{center}
+      \begin{tikzpicture}[node distance=0.32cm]
+        \node[layer] (front) {Front Vue 3 (navigateur)};
+        \node[layer, below=of front] (ctrl) {Contrôleurs REST};
+        \node[layer, below=of ctrl] (svc) {Services (\texttt{VirementService}\ldots)};
+        \node[layer, below=of svc] (dom) {Domaine (\texttt{Compte}, \texttt{Client}\ldots)};
+        \node[layer, below=of dom] (repo) {Repositories Spring Data};
+        \node[layer, below=of repo, draw=qamuted] (db) {PostgreSQL};
+        \draw[arr] (front) -- node[right, font=\tiny, text=qamuted] {HTTP / JSON} (ctrl);
+        \draw[arr] (ctrl) -- (svc);
+        \draw[arr] (svc) -- (dom);
+        \draw[arr] (dom) -- (repo);
+        \draw[arr] (repo) -- (db);
+        \node[ext, right=0.9cm of svc, yshift=0.55cm] (taux) {API taux de change};
+        \node[ext, right=0.9cm of svc, yshift=-0.2cm] (notif) {Notification e-mail/SMS};
+        \node[ext, right=0.9cm of svc, yshift=-0.95cm] (clock) {Horloge (\texttt{Clock})};
+        \draw[arr, qaaccent2] (svc.east) -- (taux.west);
+        \draw[arr, qaaccent2] (svc.east) -- (notif.west);
+        \draw[arr, qaaccent2] (svc.east) -- (clock.west);
+        \node[tag, left=0.15cm of front] {TP5};
+        \node[tag, left=0.15cm of ctrl] {TP4};
+        \node[tag, left=0.15cm of svc] {TP3};
+        \node[tag, left=0.15cm of dom] {TP1};
+        \node[tag, left=0.15cm of repo] {TP4};
+      \end{tikzpicture}
+      \end{center}
+    \end{column}
+    \begin{column}{0.38\textwidth}
+      \begin{itemize}
+        \item Le domaine de R3.07 : clients, comptes, opérations, virements
+        \item Projet de départ fourni : Spring Boot, Maven, docker-compose, front Vue 3 déjà écrit
+        \item Collaborateurs externes (en pointillé) : à remplacer par des \textbf{doublures} dans les tests
+        \item Les scénarios Cucumber (TP2) traversent toutes les couches ; la pipeline (TP6) lance tout
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Rendus et évaluation}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{block}{Rendus de TP}
+        \begin{itemize}
+          \item En \textbf{binôme}, un dépôt Git par binôme
+          \item \textbf{Chaque} TP est rendu : tag Git \texttt{tp1}, \ldots, \texttt{tp6}, avant la date limite indiquée dans le sujet
+          \item Un seul TP sera corrigé, choisi à la fin du module : \alert{tous comptent}
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{Coefficient d'assiduité}
+        \small
+        Un rendu manquant ou en retard $=$ 1 défaut ;\\ deux rendus incomplets $=$ 1 défaut
+        \vspace{1mm}
+        \begin{center}
+        \begin{tabular}{@{}lccc@{}}
+          \toprule
+          Défauts & 0 & 1 & 2 et plus \\
+          Coefficient & 1 & 0,9 & 0,75 \\
+          \bottomrule
+        \end{tabular}
+        \end{center}
+      \end{block}
+    \end{column}
+  \end{columns}
+  \vspace{3mm}
+  \begin{datacard}
+    \textbf{Note} $=$ moyenne\big( moyenne(quiz 1, quiz 2) , note du TP corrigé $\times$ coefficient d'assiduité \big)
+  \end{datacard}
+\end{frame}
+
+\begin{frame}{À retenir}
+  \small
+  \begin{itemize}
+    \item Un bug coûte d'autant plus cher qu'il est découvert tard : tester \textbf{tôt} et \textbf{souvent}
+    \item Vérification (le produit est-il correct ?) $\neq$ validation (est-ce le bon produit ?)
+    \item Quatre niveaux : unitaire, intégration, bout en bout, acceptation ; une \textbf{pyramide} : beaucoup de tests rapides, peu de tests lents
+    \item Non-régression : rejouer automatiquement tous les tests à chaque modification ; un bug corrigé $=$ un test ajouté
+    \item Un bon test : Arrange / Act / Assert, un nom explicite, FIRST
+    \item Choisir ses cas : partitions et valeurs limites, puis tests paramétrés
+  \end{itemize}
+  \vspace{3mm}
+  \begin{exampleblock}{TP1}
+    Prise en main du projet fil rouge et tests JUnit avancés de la couche domaine.
+  \end{exampleblock}
+\end{frame}
+
+\rquestionslide
+
+\end{document}

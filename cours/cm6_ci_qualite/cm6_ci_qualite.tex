@@ -1,0 +1,470 @@
+\documentclass[aspectratio=169,10pt]{beamer}
+\input{../../latex/common/r402-slides-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{img/}}
+
+\title{Environnements, intégration continue et couverture de tests}
+\author[C. Tibermacine]{Chouki Tibermacine}
+\date{}
+
+\lstdefinelanguage{yaml}{
+  keywords={true,false,null},
+  sensitive=false,
+  comment=[l]{\#},
+  morestring=[b]',
+  morestring=[b]"
+}
+\lstdefinestyle{yml}{language=yaml, basicstyle=\lstcode\scriptsize}
+\lstdefinestyle{sortie}{language={}, basicstyle=\lstcode\scriptsize, keywordstyle={}, commentstyle={}, stringstyle={}}
+
+\tikzset{
+  env/.style={rectangle, rounded corners=3pt, draw=qaaccent, thick, fill=qapanel, text=qatext,
+    minimum height=0.9cm, minimum width=2.5cm, align=center, font=\scriptsize},
+  job/.style={rectangle, rounded corners=2pt, draw=qamuted, thick, fill=qapanelalt, text=qatext,
+    minimum height=0.5cm, minimum width=1.9cm, align=center, font=\tiny},
+  arr/.style={-Latex, qamuted, thick}
+}
+
+\begin{document}
+
+\rtitleslide{6}{Environnements, intégration continue et couverture de tests}
+
+\begin{frame}{Où en est-on ?}
+  \begin{columns}[c]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item Nous savons écrire tous les niveaux de tests : unitaires, acceptation, intégration, bout en bout
+        \item Trois questions restent :
+          \begin{enumerate}
+            \item \textbf{Où} s'exécute l'application, et quels tests dans quel environnement ?
+            \item \textbf{Qui} lance les tests, et \textbf{quand} ? (« j'ai oublié de les lancer »)
+            \item Nos tests sont-ils \textbf{suffisants} ?
+          \end{enumerate}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{datacard}
+        \small
+        Réponses d'aujourd'hui :\\[1mm]
+        1. les \textbf{environnements}\\
+        2. l'\textbf{intégration continue} (GitLab CI)\\
+        3. la \textbf{couverture} (JaCoCo) et la \textbf{mutation} (PIT)
+      \end{datacard}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Les environnements d'une application}
+
+\begin{frame}{Du poste du développeur à la production}
+  \begin{center}
+  \begin{tikzpicture}[node distance=0.55cm]
+    \node[env] (dev) {Développement\\{\tiny\color{qamuted}votre poste}};
+    \node[env, right=of dev] (ci) {Intégration\\{\tiny\color{qamuted}machines de CI}};
+    \node[env, right=of ci] (rec) {Recette\\{\tiny\color{qamuted}\textit{staging}, préproduction}};
+    \node[env, right=of rec, draw=qaaccent2] (prod) {Production\\{\tiny\color{qamuted}les vrais clients}};
+    \draw[arr] (dev) -- node[above, font=\tiny, text=qamuted] {\textit{push}} (ci);
+    \draw[arr] (ci) -- node[above, font=\tiny, text=qamuted] {auto.} (rec);
+    \draw[arr] (rec) -- node[above, font=\tiny, text=qamuted] {décision} (prod);
+  \end{tikzpicture}
+  \end{center}
+  \vspace{2mm}
+  \begin{itemize}
+    \item \textbf{Développement} : on code, on lance les tests rapides, base locale (\texttt{docker compose})
+    \item \textbf{Intégration} : à chaque \textit{push}, une machine neutre compile et lance \textbf{tous} les tests
+    \item \textbf{Recette} : une copie aussi fidèle que possible de la production ; le client y valide les stories (CM2)
+    \item \textbf{Production} : ce que les clients utilisent ; on n'y fait pas d'essais
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Quels tests dans quel environnement ?}
+  \small
+  \begin{datacard}
+    \begin{tabular}{@{}p{2.4cm}p{10.2cm}@{}}
+      \toprule
+      \textbf{Environnement} & \textbf{Tests} \\
+      \midrule
+      Développement & unitaires (secondes, à chaque modification), quelques tests d'intégration ciblés \\[0.5mm]
+      Intégration (CI) & \textbf{tous} les tests automatiques : unitaires, intégration (Testcontainers), acceptation (Cucumber), bout en bout (Playwright) ; couverture, mutation \\[0.5mm]
+      Recette & bout en bout sur l'application déployée ; \textbf{recette} par le client ; tests de performance ; tests d'utilisabilité \\[0.5mm]
+      Production & \textit{smoke tests} juste après le déploiement (« l'application répond, la connexion marche ») ; supervision : erreurs, temps de réponse \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{2mm}
+  \begin{itemize}
+    \item Plus on avance vers la production, plus un bug coûte cher (CM1) : chaque environnement est un \textbf{filet} de plus
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Construire une fois, configurer partout}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Le même artefact}
+        \begin{itemize}
+          \item On construit \textbf{une seule fois} (un \texttt{.jar}, une image Docker), puis on \textbf{promeut} ce même artefact de la CI à la recette, puis à la production
+          \item Ce qui a été testé est exactement ce qui est déployé
+          \item Seule la \textbf{configuration} change : URL de la base, adresses des services, niveau de journalisation (profils Spring, variables d'environnement)
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{alertblock}{Secrets et données}
+        \begin{itemize}
+          \item Mots de passe et clés d'API : \textbf{jamais} dans le dépôt ; variables protégées de la CI, coffre-fort de secrets
+          \item Développement et CI : jeux de données de test
+          \item Recette : données réalistes mais \textbf{anonymisées} (RGPD)
+          \item Production : les vraies données ; jamais de tests qui les modifient
+        \end{itemize}
+      \end{alertblock}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Intégration et déploiement continus}
+
+\begin{frame}{CI, livraison continue, déploiement continu}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item \textbf{Intégration continue} (CI) : chaque modification poussée est compilée et testée automatiquement, plusieurs fois par jour
+        \item \textbf{Livraison continue} : chaque version qui passe la CI est \textbf{prête} à être déployée ; la mise en production est une décision humaine (un bouton)
+        \item \textbf{Déploiement continu} : la mise en production est elle aussi automatique
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{block}{La non-régression, automatisée}
+        \begin{itemize}
+          \item Toute la suite est rejouée à chaque \textit{push} et à chaque \textit{merge request}
+          \item Une \textit{merge request} dont la pipeline est rouge \textbf{ne peut pas} être fusionnée
+          \item La règle d'or du CM1 devient vérifiable : un bug corrigé $=$ un test ajouté, rejoué à jamais
+          \item Personne ne peut « oublier » de lancer les tests
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Anatomie d'une pipeline GitLab CI}
+  \begin{center}
+  \begin{tikzpicture}[x=2.15cm, y=0.75cm]
+    \foreach \x/\s in {0/build, 1/test, 2/e2e, 3/qualite, 4/recette, 5/production} {
+      \node[font=\scriptsize\bfseries, text=qaaccent] at (\x,1.1) {\s};
+      \draw[qaline] (\x-0.47,0.75) rectangle (\x+0.47,-1.65);
+    }
+    \node[job] at (0,0) {compiler};
+    \node[job] at (1,0) {tests};
+    \node[job] at (2,0) {e2e};
+    \node[job] at (3,0) {mutation};
+    \node[job] at (4,0) {recette};
+    \node[job, draw=qaaccent2] at (5,0) {production\\{\tiny manuel}};
+    \foreach \x in {0,...,4} \draw[arr] (\x+0.47,0) -- (\x+0.53,0);
+    \node[font=\tiny, text=qamuted, align=center] at (1,-1.0) {service\\\texttt{docker:dind}};
+    \node[font=\tiny, text=qamuted, align=center] at (2,-1.0) {image avec\\navigateurs};
+    \node[font=\tiny, text=qamuted, align=center] at (3,-1.0) {branche\\principale};
+  \end{tikzpicture}
+  \end{center}
+  \small
+  \begin{itemize}
+    \item Fichier \texttt{.gitlab-ci.yml} à la racine du dépôt, versionné avec le code
+    \item \textbf{Étapes} (\textit{stages}) exécutées dans l'ordre ; les \textbf{jobs} d'une même étape en parallèle ; si un job échoue, les étapes suivantes ne sont pas lancées
+    \item Chaque job s'exécute dans un conteneur neuf (\texttt{image}), sur une machine appelée \textit{runner}
+    \item \textbf{Artefacts} : fichiers conservés après le job (rapports, traces) ; \textbf{cache} : dépendances Maven réutilisées d'une exécution à l'autre
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[fragile]{Le fichier \texttt{.gitlab-ci.yml} (1/2)}
+  \begin{columns}[T]
+    \begin{column}{0.6\textwidth}
+\begin{lstlisting}[style=yml]
+stages: [build, test, e2e, qualite, recette, production]
+default:
+  image: maven:3.9-eclipse-temurin-21
+  cache: { paths: [.m2/repository] }
+variables:
+  DOCKER_HOST: "tcp://docker:2375"   # pour Testcontainers
+  DOCKER_TLS_CERTDIR: ""
+tests:
+  stage: test
+  services:
+    - { name: "docker:dind", command: ["--tls=false"] }
+  script:
+    - mvn --batch-mode verify -Dgroups='!e2e'
+  artifacts:
+    when: always
+    reports:
+      junit: [target/surefire-reports/TEST-*.xml]
+      coverage_report:
+        coverage_format: jacoco
+        path: target/site/jacoco/jacoco.xml
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.37\textwidth}
+      \small
+      \begin{itemize}
+        \item \texttt{image} : Java et Maven, sans rien installer
+        \item \texttt{services} : un Docker dans le job, pour que Testcontainers démarre PostgreSQL (le \textit{runner} doit l'autoriser)
+        \item \texttt{-Dgroups='!e2e'} : tous les tests sauf ceux tagués \texttt{e2e}, lancés plus tard
+        \item \texttt{reports} : GitLab lit les résultats JUnit et la couverture et les affiche dans la \textit{merge request}
+        \item \texttt{when: always} : garder les rapports même si un test échoue
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Le fichier \texttt{.gitlab-ci.yml} (2/2)}
+  \begin{columns}[T]
+    \begin{column}{0.6\textwidth}
+\begin{lstlisting}[style=yml]
+e2e:
+  stage: e2e
+  image: mcr.microsoft.com/playwright/java:v1.64.0-noble
+  services:
+    - { name: "docker:dind", command: ["--tls=false"] }
+  script:
+    - mvn --batch-mode verify -Dgroups=e2e
+  artifacts: { when: on_failure, paths: [target/traces/] }
+recette:
+  stage: recette
+  script: echo "Déploiement de $CI_COMMIT_SHORT_SHA"
+  environment: { name: recette }
+production:
+  stage: production
+  script: echo "Déploiement de $CI_COMMIT_SHORT_SHA"
+  environment: { name: production }
+  when: manual
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.37\textwidth}
+      \small
+      \begin{itemize}
+        \item Image officielle Playwright : Java, Maven et navigateurs déjà installés
+        \item En cas d'échec, les \textbf{traces} Playwright sont téléchargeables depuis la pipeline (CM5)
+        \item \texttt{environment} : GitLab garde l'historique de ce qui a été déployé où
+        \item \texttt{when: manual} : la mise en production attend un clic (livraison continue)
+        \item Ici, le déploiement est simulé (\texttt{echo}) : il faudrait un serveur cible
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Organiser la suite de tests}
+  \begin{columns}[T]
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Échouer vite}
+        \begin{itemize}
+          \item Les tests les plus \textbf{rapides} d'abord : une erreur de compilation ou un test unitaire rouge arrête tout en une minute
+          \item Les tests lents (bout en bout, mutation) ensuite, ou seulement sur la branche principale
+          \item Une pipeline qui dure 40 minutes, personne n'attend son résultat
+        \end{itemize}
+      \end{block}
+    \end{column}
+    \begin{column}{0.48\textwidth}
+      \begin{block}{Séparer les tests}
+        \begin{itemize}
+          \item \textbf{Tags} JUnit (\texttt{@Tag("e2e")}) et filtres Maven (\texttt{-Dgroups=e2e}, \texttt{-Dgroups='!e2e'})
+          \item Ou conventions de nommage : \texttt{*Test} pour les tests unitaires (\textit{Surefire}, \texttt{mvn test}), \texttt{*IT} pour l'intégration (\textit{Failsafe}, \texttt{mvn verify})
+          \item Un test instable bloque toute l'équipe : on le répare tout de suite (CM5)
+        \end{itemize}
+      \end{block}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+% ================================================================
+\section{Couverture et mutation}
+
+\begin{frame}[fragile]{Mesurer la couverture}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+public BigDecimal fraisVirement(BigDecimal montant,
+        boolean instantane, boolean premium) {
+    if (premium) {
+        return BigDecimal.ZERO;
+    }
+    if (!instantane) {
+        return BigDecimal.ZERO;
+    }
+    if (montant.compareTo(SEUIL) > 0) {
+        return FRAIS_INSTANTANE_ELEVE;   // 2,00 €
+    }
+    return FRAIS_INSTANTANE;             // 1,00 €
+}
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \small
+      \begin{itemize}
+        \item \textbf{Couverture des lignes} : proportion des lignes exécutées par au moins un test
+        \item \textbf{Couverture des branches} : chaque \texttt{if} a deux branches (vrai, faux) ; les a-t-on toutes parcourues ?
+        \item Ici, deux tests (premium, standard) exécutent 5 lignes sur 9\ldots{} et 3 branches sur 6 : les virements instantanés ne sont \textbf{jamais} testés
+        \item La couverture des branches est plus exigeante, donc plus utile
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{JaCoCo : rapport et seuil}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+\begin{lstlisting}[language=XML, basicstyle=\lstcode\scriptsize]
+<plugin>
+  <groupId>org.jacoco</groupId>
+  <artifactId>jacoco-maven-plugin</artifactId>
+  <!-- executions : prepare-agent,
+       report, check (phase verify) -->
+  <configuration>
+    <rules><rule>
+      <element>BUNDLE</element>
+      <limits><limit>
+        <counter>BRANCH</counter>
+        <value>COVEREDRATIO</value>
+        <minimum>0.80</minimum>
+      </limit></limits>
+    </rule></rules>
+  </configuration>
+</plugin>
+\end{lstlisting}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \small
+      \begin{itemize}
+        \item JaCoCo observe l'exécution des tests et produit un rapport HTML : lignes \textcolor{qacodestr}{vertes} (couvertes), \textcolor{qaaccent2}{jaunes} (branches en partie couvertes), \textcolor{qaaccent}{rouges} (jamais exécutées)
+        \item \texttt{check} : le build \textbf{échoue} sous le seuil
+      \end{itemize}
+\begin{lstlisting}[style=sortie]
+Rule violated for bundle: branches covered
+ratio is 0.50, but expected minimum is 0.80
+BUILD FAILURE
+\end{lstlisting}
+      \begin{itemize}
+        \item En CI, la couverture s'affiche dans la \textit{merge request}, ligne par ligne
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}[fragile]{Ce que la couverture ne dit pas}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+\begin{lstlisting}[basicstyle=\lstcode\scriptsize]
+@Test
+void instantane_petitMontant() {
+    assertThat(tarification
+        .fraisVirement(eur("50"), true, false))
+        .isPositive();
+}
+@Test
+void instantane_grosMontant() {
+    assertThat(tarification
+        .fraisVirement(eur("5000"), true, false))
+        .isPositive();
+}
+\end{lstlisting}
+      \small Avec deux tests de ce genre en plus : \textbf{100 \%} des lignes et des branches.
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \small
+      \begin{itemize}
+        \item Le code est \textbf{exécuté}, mais est-il \textbf{vérifié} ?
+          \begin{itemize}
+            \item \texttt{isPositive()} accepte 1 \euro{} comme 2 \euro{}
+            \item personne ne teste exactement 1\,000 \euro{} : \texttt{>} ou \texttt{>=}, aucun test ne fait la différence
+          \end{itemize}
+        \item Un test sans assertion « couvre » aussi tout ce qu'il appelle
+        \item 100 \% de couverture ne garantit pas l'absence de bugs ; 40 \% garantit que la majorité du code n'est jamais testée
+        \item Un seuil imposé devient un objectif : on écrit des tests pour le chiffre, pas pour trouver des bugs
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Les tests de mutation (PIT)}
+  \begin{columns}[T]
+    \begin{column}{0.5\textwidth}
+      \begin{itemize}
+        \item Idée : \textbf{introduire des bugs} exprès, et vérifier que les tests les détectent
+        \item PIT crée des \textbf{mutants} : des copies du code avec une petite modification
+          \begin{itemize}
+            \item \texttt{>} devient \texttt{>=} (\textit{conditional boundary})
+            \item une condition est inversée
+            \item une valeur renvoyée est remplacée par \texttt{null}
+          \end{itemize}
+        \item Il relance les tests sur chaque mutant :
+          \begin{itemize}
+            \item un test échoue : mutant \textbf{tué} (bien)
+            \item tous passent : mutant \alert{survivant}, un bug que nos tests laisseraient passer
+          \end{itemize}
+      \end{itemize}
+    \end{column}
+    \begin{column}{0.46\textwidth}
+      \begin{datacard}
+        \small
+        \begin{tabular}{@{}lcc@{}}
+          \toprule
+          \textbf{Tests} & \textbf{Lignes} & \textbf{Mutants tués} \\
+          \midrule
+          faibles & 100 \% & \alert{75 \%} (6/8) \\
+          solides & 100 \% & 100 \% (8/8) \\
+          \bottomrule
+        \end{tabular}
+      \end{datacard}
+      \small
+      \begin{itemize}
+        \item Même couverture, qualité très différente : le \textbf{score de mutation} mesure la force des assertions
+        \item Coût : les tests sont relancés des dizaines de fois ; on le lance sur la branche principale, ou sur le code modifié
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+
+\rdemo{1}{Couverture et mutation}{%
+  \item Deux tests seulement : JaCoCo fait \textbf{échouer le build} (50 \% des branches) ; le rapport HTML montre en rouge ce qui n'est jamais exécuté
+  \item Des tests faibles : 100 \% de couverture, build vert\ldots
+  \item \ldots{} mais PIT : 2 mutants survivent, dont \texttt{>} remplacé par \texttt{>=}
+  \item Les tests solides (valeurs exactes, valeur limite 1\,000 \euro{}) : tous les mutants sont tués
+  \item Le fichier \texttt{.gitlab-ci.yml} complet
+}{\texttt{Tarification}\\\texttt{Tarification*Test}\\\texttt{target/site/jacoco/}\\\texttt{target/pit-reports/}\\\texttt{gitlab-ci-exemple.yml}}
+
+\begin{frame}{Bilan du module : quel test, pour quel risque, où ?}
+  \footnotesize
+  \begin{datacard}
+    \begin{tabular}{@{}p{2.5cm}p{4.1cm}p{2.7cm}p{2.9cm}@{}}
+      \toprule
+      \textbf{Test} & \textbf{Risque couvert} & \textbf{Outils} & \textbf{Où, quand} \\
+      \midrule
+      Unitaire & règle métier fausse, valeur limite & JUnit, AssertJ, Mockito & poste, CI ; chaque modification \\[0.5mm]
+      Acceptation & on construit le mauvais produit & Cucumber & CI ; recette \\[0.5mm]
+      Intégration & SQL, mapping, transaction, configuration & Testcontainers, Spring, MockMvc & CI \\[0.5mm]
+      Bout en bout & parcours utilisateur cassé, bug du front & Playwright & CI, recette \\[0.5mm]
+      Non-régression & ce qui marchait ne marche plus & toute la suite & CI, à chaque \textit{push} \\[0.5mm]
+      Couverture, mutation & tests insuffisants ou trop faibles & JaCoCo, PIT & CI, branche principale \\
+      \bottomrule
+    \end{tabular}
+  \end{datacard}
+  \vspace{1mm}
+  \small Pour aller plus loin : analyse statique du code, \textit{quality gates} (bloquer une fusion selon des critères de qualité), analyse de sécurité des dépendances et des images dans la pipeline.
+\end{frame}
+
+\begin{frame}{À retenir}
+  \footnotesize
+  \begin{itemize}
+    \item Quatre environnements : développement, intégration, \textbf{recette}, production ; un filet de tests à chaque étape
+    \item On construit \textbf{une fois} et on promeut le même artefact ; seule la configuration change ; jamais de secret dans le dépôt
+    \item \textbf{Intégration continue} : tous les tests, à chaque \textit{push} ; une \textit{merge request} rouge ne se fusionne pas
+    \item \texttt{.gitlab-ci.yml} : étapes, jobs, image, services (\texttt{docker:dind} pour Testcontainers), artefacts, environnements, \texttt{when: manual}
+    \item Échouer vite : tests rapides d'abord, tests lents ensuite
+    \item \textbf{Couverture} (JaCoCo) : ce qui est exécuté ; branches plutôt que lignes ; un seuil qui fait échouer le build
+    \item \textbf{Mutation} (PIT) : ce qui est vraiment vérifié ; un mutant survivant est un bug que les tests laisseraient passer
+  \end{itemize}
+  \vspace{1mm}
+  \begin{exampleblock}{TP6}
+    La pipeline GitLab CI du projet fil rouge, avec couverture et mutation. \alert{Quiz 2} en fin de semaine, lors d'une séance à part (CM4 à CM6).
+  \end{exampleblock}
+\end{frame}
+
+\rquestionslide
+
+\end{document}

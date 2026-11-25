@@ -1,0 +1,134 @@
+\documentclass[11pt]{article}
+\input{../../latex/common/r402-tp-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{./}}
+
+% A ajuster avant diffusion
+\newcommand{\rdatelimite}{la veille de la séance du TP6, à 23\,h\,59}
+
+\begin{document}
+
+\rtpheader{5}{Tests de bout en bout de l'interface web avec Playwright}
+
+\begin{infobox}[Objectifs]
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item Piloter un vrai navigateur depuis des tests JUnit avec Playwright for Java.
+  \item Partir d'un test généré par \texttt{codegen} et le transformer en test robuste (sélecteurs, attentes, Page Object).
+  \item Trouver des bugs qu'aucun test côté serveur ne pouvait voir.
+  \item Repérer et corriger un test instable ; déboguer avec le \textit{trace viewer}.
+  \item Exécuter un scénario Cucumber du TP2 à travers l'interface.
+\end{itemize}
+\end{infobox}
+
+Continuez dans le dépôt de votre binôme, à partir de votre rendu du TP4. Docker doit être démarré : les tests de bout en bout utilisent la même base PostgreSQL de test que le TP4.
+
+% ================================================================
+\section{Mise en place (10 min)}
+
+Le projet de départ contient :
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item le front : une page de connexion (\texttt{connexion.html}) et une application Vue 3 (\texttt{index.html} et \texttt{js/}), dans \texttt{src/main/resources/static}. Vue est utilisé \textbf{sans étape de construction} : pas de Node.js, une modification d'un composant (\texttt{js/composants/*.js}) est prise en compte dès que l'application est relancée ;
+  \item la dépendance Playwright for Java, et le plugin Maven qui donne accès à ses outils (\texttt{./mvnw exec:java -Dexec.args="..."}) ;
+  \item la classe \texttt{BaseE2ETest} (paquetage de test \texttt{fr.iutvannes.banque.e2e}), qui démarre l'application sur un port aléatoire avec la base de test, puis un navigateur Chromium, et enregistre une trace par test ;
+  \item deux utilisateurs de test : \texttt{alice} / \texttt{alice123} (comptes \texttt{FR76-001} et \texttt{FR76-002}) et \texttt{bruno} / \texttt{bruno123} (compte \texttt{FR76-003}).
+\end{itemize}
+
+\begin{exobox}{Prise en main}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Téléchargez le navigateur utilisé par Playwright (une seule fois) :
+\begin{codebox}
+./mvnw exec:java -Dexec.args="install chromium"
+\end{codebox}
+  \item Lancez l'application (\texttt{docker compose up -d} puis \texttt{./mvnw spring-boot:run}) et utilisez-la à la main : connexion, consultation des comptes, virement. Notez dans \texttt{docs/tp5.md} les deux ou trois parcours qui vous semblent \textbf{critiques} pour la banque.
+  \item Lisez \texttt{BaseE2ETest}. Dans \texttt{docs/tp5.md}, expliquez en une phrase chacun : pourquoi un \texttt{BrowserContext} neuf par test ? Où et quand les données de la base sont-elles remises à zéro ? À quoi sert l'option \texttt{-Dheaded=true} ?
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Partir d'un test enregistré (15 min)}
+
+\begin{exobox}{Le générateur de code}
+\begin{enumerate}[leftmargin=1.4em]
+  \item L'application étant lancée, démarrez le générateur :
+\begin{codebox}
+./mvnw exec:java -Dexec.args="codegen http://localhost:8080"
+\end{codebox}
+  \item Dans le navigateur qui s'ouvre, connectez-vous avec \texttt{alice}, faites un virement de 150\,\euro{} de \texttt{FR76-001} vers \texttt{FR76-002}, puis revenez à la liste des comptes. Dans la fenêtre de l'inspecteur, choisissez la cible « Java / JUnit ».
+  \item Copiez le code généré dans une classe \texttt{VirementEnregistreTest} qui hérite de \texttt{BaseE2ETest}, et adaptez-le pour qu'il tourne (URL, objet \texttt{page}). Lancez-le, en mode visible puis invisible.
+  \item Critiquez ce code dans \texttt{docs/tp5.md} : quels sélecteurs sont fragiles ? Que vérifie-t-il réellement ? Que se passerait-il si on renommait le bouton « Valider » en « Confirmer » ? Si on ajoutait un champ au formulaire ?
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Des tests robustes (30 min)}
+
+\begin{exobox}{Page Objects}
+Dans le paquetage \texttt{fr.iutvannes.banque.e2e.pages}, écrivez un Page Object par écran : \texttt{PageConnexion}, \texttt{PageComptes}, \texttt{PageVirement}. Chacun expose des \textbf{actions métier} (\texttt{seConnecter(identifiant, motDePasse)}, \texttt{virer(source, cible, montant)}, \texttt{solde(numero)}\ldots) et ne contient aucune assertion.
+\begin{itemize}[leftmargin=1.2em]
+  \item Utilisez en priorité \texttt{getByRole} et \texttt{getByLabel}, puis \texttt{getByText}.
+  \item Quand aucun de ces sélecteurs ne convient (par exemple la cellule du solde d'un compte dans un tableau), ajoutez un attribut \texttt{data-testid} dans le composant Vue concerné (\texttt{src/main/resources/static/js/composants}), par exemple \texttt{:data-testid="'solde-' + compte.numero"}.
+  \item Si \texttt{getByRole} ou \texttt{getByLabel} ne trouve pas un élément pourtant visible, regardez le HTML : un champ sans \texttt{<label>}, un \texttt{<div>} cliquable au lieu d'un \texttt{<button>} ? Corrigez le composant Vue plutôt que de contourner avec un sélecteur CSS. Notez ces corrections dans \texttt{docs/tp5.md} : ce sont aussi des corrections d'\textbf{accessibilité}.
+\end{itemize}
+\end{exobox}
+
+\begin{exobox}{Les parcours critiques}
+Réécrivez le test enregistré, puis ajoutez les autres parcours, dans une classe \texttt{VirementE2ETest}. Toutes les vérifications passent par \texttt{assertThat(locator)} de Playwright ; aucun \texttt{Thread.sleep}, aucun \texttt{textContent()} suivi d'un \texttt{assertEquals}.
+\begin{enumerate}[leftmargin=1.4em]
+  \item Connexion réussie (le nom du client est affiché), connexion refusée (message d'erreur, on reste sur la page de connexion).
+  \item Virement accepté : message de confirmation \textbf{et} nouveaux soldes affichés dans la liste des comptes.
+  \item Virement de \textbf{150,50\,\euro{}} : les soldes affichés sont-ils corrects au centime près ?
+  \item Virement refusé pour solde insuffisant (connecté en \texttt{bruno}) : le message affiché à l'utilisateur est-il compréhensible ?
+  \item Virement de plus de 1\,000\,\euro{} : une fenêtre de confirmation (\texttt{role="dialog"}) s'affiche ; testez la confirmation \textbf{et} l'annulation (aucun solde ne change).
+\end{enumerate}
+Au moins deux de ces parcours révèlent un bug \textbf{du front}. Pour chacun : notez-le dans \texttt{docs/tp5.md}, expliquez pourquoi les tests des TP1 à TP4 ne pouvaient pas le voir, corrigez le composant Vue, relancez.
+\end{exobox}
+
+% ================================================================
+\section{Instabilité et débogage (10 min)}
+
+\begin{exobox}{Un test instable ?}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Remplacez temporairement \texttt{@Test} par \texttt{@RepeatedTest(10)} sur deux de vos tests et lancez-les. Passent-ils dix fois sur dix ?
+  \item Écrivez volontairement une version fragile d'un test : lire le message avec \texttt{textContent()} juste après le clic, et le comparer avec \texttt{assertEquals}. Répétez-la dix fois. Expliquez le résultat.
+  \item Ouvrez la trace d'un échec :
+\begin{codebox}
+./mvnw exec:java -Dexec.args="show-trace target/traces/<nom-du-test>.zip"
+\end{codebox}
+  Parcourez les actions une à une. À quel moment la page affichait-elle le message ? Qu'y avait-il dans l'onglet \textit{Network} au moment de la lecture ? Supprimez ensuite la version fragile.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Le scénario Cucumber, dans le navigateur (15 min)}
+
+\begin{exobox}{Mêmes scénarios, autres étapes}
+Au TP2, vos étapes Cucumber appelaient directement \texttt{VirementService}. On veut maintenant exécuter \textbf{un} scénario de \texttt{virement.feature} à travers l'interface, sans modifier le texte du scénario.
+\begin{enumerate}[leftmargin=1.4em]
+  \item Marquez ce scénario avec un tag \texttt{@ui}.
+  \item Créez un second lanceur \texttt{CucumberUiTest}, avec un paquetage d'étapes distinct, \textbf{qui ne soit pas un sous-paquetage} de \texttt{acceptation} (par exemple \texttt{fr.iutvannes.banque.e2e.cucumber}), et un filtre sur le tag :\\
+  \texttt{@ConfigurationParameter(key = FILTER\_TAGS\_PROPERTY\_NAME, value = "@ui")}.
+  \item Écrivez les étapes de ce paquetage en utilisant vos Page Objects. Les étapes « Étant donné un compte\ldots » doivent préparer les données \textbf{sans passer par l'interface} (directement en base, comme dans \texttt{BaseE2ETest}).
+  \item Le lanceur du TP2 exécute-t-il toujours tous les scénarios, y compris \texttt{@ui} ? Est-ce souhaitable ? Justifiez en deux phrases dans \texttt{docs/tp5.md}.
+\end{enumerate}
+\textit{Indice} : pour que les étapes aient accès à l'application démarrée et à son port, annotez une classe du paquetage d'étapes avec \texttt{@CucumberContextConfiguration} et \texttt{@SpringBootTest(webEnvironment = RANDOM\_PORT)}, comme \texttt{ConfigurationCucumber} le fait pour le TP2. Le port est disponible par \texttt{@Value("\$\{local.server.port\}")}. Le navigateur se lance dans des méthodes \texttt{@BeforeAll} / \texttt{@AfterAll} statiques de Cucumber (\texttt{io.cucumber.java}), un onglet par scénario dans \texttt{@Before} / \texttt{@After}.
+\end{exobox}
+
+% ================================================================
+\section{Rendu}
+
+\begin{infobox}[À rendre avant \rdatelimite]
+Sur le dépôt du binôme, un \textbf{tag} \texttt{tp5} pointant sur le commit rendu :
+\begin{codebox}
+git tag tp5
+git push origin tp5
+\end{codebox}
+Le commit doit contenir :
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item les Page Objects et \texttt{VirementE2ETest} (le test enregistré \texttt{VirementEnregistreTest} peut être supprimé) ;
+  \item les composants Vue corrigés (bugs, \texttt{data-testid}, accessibilité) ;
+  \item \texttt{CucumberUiTest} et ses étapes ;
+  \item \texttt{docs/tp5.md} : parcours critiques, réponses sur \texttt{BaseE2ETest}, critique du code généré, journal des bugs du front, analyse du test instable, choix pour les scénarios \texttt{@ui} ;
+  \item une suite complète qui passe : \texttt{./mvnw test} (Docker démarré).
+\end{itemize}
+\end{infobox}
+
+\end{document}

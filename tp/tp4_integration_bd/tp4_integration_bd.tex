@@ -1,0 +1,173 @@
+\documentclass[11pt]{article}
+\input{../../latex/common/r402-tp-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{./}}
+
+% A ajuster avant diffusion
+\newcommand{\rdatelimite}{la veille de la séance du TP5, à 23\,h\,59}
+
+\begin{document}
+
+\rtpheader{4}{Tests d'intégration avec une base de données}
+
+\begin{infobox}[Objectifs]
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item Tester les repositories Spring Data sur un vrai PostgreSQL, démarré par Testcontainers.
+  \item Constater qu'une base en mémoire (H2) ne se comporte pas comme PostgreSQL.
+  \item Tester l'API REST de bout en bout côté serveur (contrôleur, service, base) avec MockMvc.
+  \item Garantir l'isolation des tests et vérifier qu'une transaction ne laisse pas de données incohérentes.
+\end{itemize}
+\end{infobox}
+
+\begin{infobox}[Prérequis : Docker]
+Testcontainers a besoin de Docker. Vérifiez avant tout que \texttt{docker ps} fonctionne sur votre poste, puis téléchargez l'image une fois pour toutes : \texttt{docker pull postgres:18-alpine}.
+\end{infobox}
+
+Continuez dans le dépôt de votre binôme, à partir de votre rendu du TP3. Le projet contient déjà tout ce qu'il faut pour ce TP : les dépendances de test (Testcontainers, MockMvc), les migrations Flyway qui créent le schéma de la base (dossier \texttt{src/main/resources/db/migration}), les contrôleurs REST (paquetage \texttt{web}) et les repositories Spring Data (paquetage \texttt{persistance}).
+
+% ================================================================
+\section{Mise en place (10 min)}
+
+\begin{exobox}{Un premier test avec un vrai PostgreSQL}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Créez \texttt{src/test/java/fr/iutvannes/banque/persistance/CompteRepositoryTest.java} en vous inspirant du cours : \texttt{@DataJpaTest}, \texttt{@AutoConfigureTestDatabase(replace = Replace.NONE)}, \texttt{@Testcontainers}, et un conteneur \texttt{static} annoté \texttt{@Container @ServiceConnection}.
+  \item Écrivez un test qui enregistre un compte puis le retrouve avec \texttt{findByNumero}. Lancez-le et observez \texttt{docker ps} pendant l'exécution.
+  \item Combien de temps prend le test ? Combien de temps prend le démarrage du conteneur ? Notez-le dans \texttt{docs/tp4.md}.
+  \item Vos tests ne doivent \textbf{jamais} utiliser la base de développement (\texttt{docker compose}). Arrêtez-la (\texttt{docker compose down}) et relancez le test : passe-t-il toujours ? Pourquoi ?
+\end{enumerate}
+\end{exobox}
+
+\begin{infobox}[Partager le conteneur entre plusieurs classes de test]
+Un conteneur \texttt{static} est démarré une fois \textbf{par classe}. Pour le partager entre toutes les classes, déclarez-le une seule fois comme bean de test, et importez cette configuration dans chaque classe avec \texttt{@Import(ConteneursDeTest.class)} :
+\begin{lstlisting}[language=Java]
+@TestConfiguration(proxyBeanMethods = false)
+public class ConteneursDeTest {
+    @Bean
+    @ServiceConnection
+    PostgreSQLContainer postgres() {
+        return new PostgreSQLContainer("postgres:18-alpine");
+    }
+}
+\end{lstlisting}
+\end{infobox}
+
+% ================================================================
+\section{Tester les repositories (25 min)}
+
+Le projet contient maintenant un \texttt{OperationRepository} avec trois méthodes, utilisées pour produire le relevé mensuel d'un compte :
+
+\begin{lstlisting}[language=Java]
+public interface OperationRepository extends Repository<Operation, Long> {
+
+    Operation save(Operation operation);
+
+    // Operations d'un compte entre deux instants, de la plus recente a la plus ancienne
+    List<Operation> findByCompteNumeroAndDateBetweenOrderByDateDesc(
+            String numero, LocalDateTime debut, LocalDateTime fin);
+
+    // Total des debits d'un compte sur une periode (0 s'il n'y en a aucun)
+    @Query("""
+        SELECT SUM(o.montant) FROM Operation o
+         WHERE o.compte.numero = :numero AND o.type = 'DEBIT'
+           AND o.date >= :debut AND o.date < :fin
+        """)
+    BigDecimal totalDebits(String numero, LocalDateTime debut, LocalDateTime fin);
+}
+\end{lstlisting}
+
+Le service \texttt{ReleveService} les appelle pour un mois donné, avec pour début le 1\textsuperscript{er} du mois à 0\,h et pour fin le 1\textsuperscript{er} du mois suivant à 0\,h. Le relevé de mars ne doit contenir \textbf{que} des opérations de mars.
+
+\begin{exobox}{Requête dérivée et requête JPQL}
+Dans \texttt{OperationRepositoryTest} :
+\begin{enumerate}[leftmargin=1.4em]
+  \item Testez \texttt{findByCompteNumeroAndDateBetweenOrderByDateDesc} : opérations de deux comptes différents, ordre du résultat, et surtout les \textbf{valeurs limites} de la période. Où faut-il placer des opérations pour vérifier la règle « que des opérations de mars » ? (Indice : regardez la documentation de \texttt{Between} dans Spring Data.)
+  \item Testez \texttt{totalDebits} : plusieurs débits, un crédit qui ne doit pas compter, une opération hors période, et un compte \textbf{sans aucun débit}.
+  \item Ces deux méthodes contiennent chacune un bug. Pour chacun : notez dans \texttt{docs/tp4.md} le test qui le révèle et la cause, corrigez (dans la requête ou dans le nom de la méthode), relancez.
+  \item Pourquoi ces bugs n'étaient-ils pas visibles dans les tests du TP3, où le repository était simulé ?
+\end{enumerate}
+\end{exobox}
+
+\begin{exobox}{Isolation des tests}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Écrivez un jeu de données \texttt{src/test/resources/donnees/comptes-et-operations.sql} (trois comptes, quelques opérations en février et en mars) et utilisez-le avec \texttt{@Sql} dans au moins deux tests.
+  \item Écrivez deux tests qui créent chacun un compte \texttt{FR76-001}. Ils passent : pourquoi, alors que le numéro est \texttt{UNIQUE} ?
+  \item Ajoutez \texttt{@Commit} sur l'un des deux et relancez la classe plusieurs fois. Que se passe-t-il ? Le résultat dépend-il de l'ordre ? Retirez \texttt{@Commit}.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{H2 n'est pas PostgreSQL (10 min)}
+
+La migration \texttt{V3\_\_journal\_operations.sql} crée un \textbf{trigger} PL/pgSQL, dans l'esprit de ceux de R3.07 : chaque insertion dans \texttt{operation} ajoute une ligne dans la table \texttt{journal\_operation}.
+
+\begin{exobox}{Le trigger, avec et sans PostgreSQL}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Écrivez un test (\texttt{@DataJpaTest} + Testcontainers) qui enregistre une opération, force l'écriture en base avec \texttt{flush()} (via \texttt{TestEntityManager} ou \texttt{saveAndFlush}), puis vérifie avec un \texttt{JdbcTemplate} qu'une ligne est apparue dans \texttt{journal\_operation}. Pourquoi le \texttt{flush()} est-il nécessaire ?
+  \item Copiez ce test dans une nouvelle classe, \textbf{sans} \texttt{Replace.NONE} ni conteneur : Spring utilise alors H2 (présent dans les dépendances de test). Lancez-le. Que se passe-t-il, et à quelle étape ?
+  \item En deux ou trois phrases dans \texttt{docs/tp4.md} : quels autres éléments de votre base de R3.07 auraient posé le même problème ? Qu'en concluez-vous sur le choix de la base de test ? Supprimez ensuite cette classe.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Tester l'API REST jusqu'à la base (25 min)}
+
+L'application expose deux points d'accès :
+
+\begin{center}
+\renewcommand{\arraystretch}{1.25}
+\small
+\begin{tabular}{@{}l l >{\raggedright\arraybackslash}p{7.2cm}@{}}
+\toprule
+\texttt{GET} & \texttt{/api/comptes/\{numero\}/solde?devise=USD} & \texttt{200} + \texttt{\{"numero", "solde", "devise"\}} ; \texttt{404} si le compte n'existe pas \\
+\texttt{POST} & \texttt{/api/virements} & corps \texttt{\{"source", "cible", "montant"\}} ; \texttt{201} si accepté, \texttt{404} si un compte n'existe pas, \texttt{422} si le solde est insuffisant, \texttt{400} si le montant est invalide \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{infobox}[L'API est protégée]
+Sans utilisateur connecté, l'API répond \texttt{401} ; un \texttt{POST} sans jeton CSRF reçoit \texttt{403}. Dans vos tests MockMvc, simulez un utilisateur avec \texttt{@WithMockUser("alice")} (sur la classe ou sur un test), et ajoutez \texttt{.with(csrf())} à chaque requête \texttt{POST} (imports : \texttt{org.springframework.security.test...}).
+\end{infobox}
+
+\begin{exobox}{MockMvc, PostgreSQL et doublures}
+Créez \texttt{src/test/java/fr/iutvannes/banque/web/VirementApiTest.java} avec \texttt{@SpringBootTest}, \texttt{@AutoConfigureMockMvc} et le conteneur PostgreSQL. Remplacez par \texttt{@MockitoBean} \textbf{uniquement} ce qui sort de l'application : le service de change et le service de notification.
+\begin{enumerate}[leftmargin=1.4em]
+  \item \texttt{GET} solde : en euros, en dollars (taux simulé), compte inconnu.
+  \item \texttt{POST} virement accepté : vérifiez le statut \textbf{et} les soldes \textbf{dans la base} après l'appel (rechargez les comptes depuis le repository).
+  \item \texttt{POST} virement refusé : un cas pour chacun des statuts \texttt{404}, \texttt{422} et \texttt{400}. Les soldes en base doivent être inchangés.
+  \item Un virement de plus de 1\,000\,\euro{} : la notification est-elle envoyée ? Comment le vérifier ici ?
+  \item Activez un profil Spring \texttt{test} (\texttt{@ActiveProfiles("test")}) avec un fichier \texttt{src/test/resources/application-test.properties} qui affiche le SQL exécuté (\texttt{spring.jpa.show-sql=true}). Combien de requêtes SQL pour un virement ?
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Un virement à moitié fait ? (15 min)}
+
+Un virement vers un compte \textbf{clôturé} doit être refusé : la méthode \texttt{crediter} de \texttt{Compte} lève une \texttt{CompteClotureException} (règle R4 du TP1), et l'API renvoie \texttt{422}.
+
+\begin{exobox}{Vérifier la transaction}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Écrivez le test : un compte source à 500\,\euro{}, un compte cible clôturé, \texttt{POST /api/virements} de 100\,\euro{}. Vérifiez le statut, puis le solde de la source \textbf{relu dans la base}.
+  \item Si votre classe de test est annotée \texttt{@Transactional}, retirez cette annotation pour ce test (nettoyez la base avec un \texttt{@AfterEach} à la place). Relancez. Le résultat change-t-il ? Expliquez pourquoi un test \texttt{@Transactional} pouvait \textbf{cacher} le problème.
+  \item La source a-t-elle été débitée alors que le virement a été refusé ? Si oui, regardez \texttt{VirementService.virer} : dans quel ordre les opérations sont-elles faites, et dans combien de transactions ? Corrigez (annotation \texttt{@Transactional} au bon endroit), puis vérifiez que le test passe.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Rendu}
+
+\begin{infobox}[À rendre avant \rdatelimite]
+Sur le dépôt du binôme, un \textbf{tag} \texttt{tp4} pointant sur le commit rendu :
+\begin{codebox}
+git tag tp4
+git push origin tp4
+\end{codebox}
+Le commit doit contenir :
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item \texttt{CompteRepositoryTest}, \texttt{OperationRepositoryTest} (dont le trigger), \texttt{VirementApiTest} ;
+  \item le jeu de données \texttt{comptes-et-operations.sql} et le profil \texttt{application-test.properties} ;
+  \item les corrections de \texttt{OperationRepository} et de \texttt{VirementService} ;
+  \item \texttt{docs/tp4.md} : temps mesurés, journal des bugs, H2 et PostgreSQL, explication de la transaction ;
+  \item une suite complète qui passe : \texttt{./mvnw test} (Docker démarré).
+\end{itemize}
+\end{infobox}
+
+\end{document}

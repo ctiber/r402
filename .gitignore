@@ -3,3 +3,16 @@ target/
 *.iml
 .vscode/
 .DS_Store
+
+# Fichiers intermediaires de LaTeX (supports de cours)
+*.aux
+*.log
+*.nav
+*.out
+*.snm
+*.toc
+*.vrb
+*.fls
+*.fdb_latexmk
+*.listing
+*.synctex.gz

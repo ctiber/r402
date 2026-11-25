@@ -1,0 +1,149 @@
+\documentclass[11pt]{article}
+\input{../../latex/common/r402-tp-preamble.tex}
+\graphicspath{{../../latex/common/assets/}{./}}
+
+% A ajuster avant diffusion
+\newcommand{\rdatelimite}{une semaine après la séance, à 23\,h\,59}
+
+\lstdefinelanguage{yaml}{
+  keywords={true,false,null},
+  sensitive=false,
+  comment=[l]{\#},
+  morestring=[b]',
+  morestring=[b]"
+}
+
+\begin{document}
+
+\rtpheader{6}{Pipeline GitLab CI, couverture et tests de mutation}
+
+\begin{infobox}[Objectifs]
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item Faire exécuter automatiquement toute la suite de tests du projet à chaque \textit{push}, sur la forge GitLab de l'IUT.
+  \item Afficher les résultats des tests et la couverture dans les \textit{merge requests} ; bloquer une fusion qui casse les tests.
+  \item Mesurer la couverture avec JaCoCo et imposer un seuil ; mesurer la force des tests avec PIT.
+  \item Enchaîner les environnements : tests, recette (simulée), mise en production manuelle.
+\end{itemize}
+\end{infobox}
+
+\begin{infobox}[Dernier TP]
+Ce TP est le dernier : son rendu est l'\textbf{état final} de votre dépôt.
+\end{infobox}
+
+Continuez dans le dépôt de votre binôme, à partir de votre rendu du TP5. Le fichier de pipeline d'exemple vu en cours est distribué avec les diapositives du CM6 : servez-vous-en, mais construisez votre pipeline \textbf{pas à pas}, en comprenant chaque ligne.
+
+% ================================================================
+\section{Une première pipeline (10 min)}
+
+\begin{exobox}{Compiler à chaque \textit{push}}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Sur la page de votre projet GitLab, menu \textit{Settings} $\rightarrow$ \textit{CI/CD} $\rightarrow$ \textit{Runners} : vérifiez qu'un \textit{runner} partagé de l'IUT est disponible pour votre projet.
+  \item Créez à la racine du dépôt un fichier \texttt{.gitlab-ci.yml} avec deux étapes, \texttt{build} et \texttt{test}, et un seul job \texttt{compiler} (image \texttt{maven:3.9-eclipse-temurin-21}, commande \texttt{mvn --batch-mode compile}) avec un cache pour le dépôt Maven local.
+  \item Poussez, puis suivez l'exécution dans \textit{Build} $\rightarrow$ \textit{Pipelines}. Ouvrez le journal du job. Combien de temps dure-t-il ? Poussez une seconde fois sans rien changer : le cache fait-il gagner du temps ?
+  \item Introduisez une erreur de compilation, poussez, observez, puis corrigez.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Les tests dans la pipeline (20 min)}
+
+\begin{exobox}{Tests unitaires, d'acceptation et d'intégration}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Annotez la classe \texttt{BaseE2ETest} avec \texttt{@Tag("e2e")} (ses sous-classes en héritent). Pour le scénario Cucumber du TP5, ajoutez le tag \texttt{@e2e} au scénario lui-même, à côté de \texttt{@ui} : JUnit filtre les scénarios, dont les tags Cucumber deviennent des tags JUnit (un \texttt{@Tag} sur la classe du lanceur ne suffit pas). Ajoutez aussi \texttt{failIfNoTests = false} à l'annotation \texttt{@Suite} de \texttt{CucumberUiTest}. Vérifiez en local :
+\begin{codebox}
+./mvnw verify -Dgroups='!e2e'     # tout sauf le bout en bout
+./mvnw verify -Dgroups=e2e        # seulement le bout en bout
+\end{codebox}
+  \item Ajoutez un job \texttt{tests} dans l'étape \texttt{test}, qui lance \texttt{mvn --batch-mode verify -Dgroups='!e2e'}. Les tests Testcontainers ont besoin de Docker : ajoutez le service \texttt{docker:dind} et les variables \texttt{DOCKER\_HOST} et \texttt{DOCKER\_TLS\_CERTDIR} (voir le cours).
+  \item Publiez les résultats des tests (\texttt{artifacts:reports:junit}), même quand des tests échouent (\texttt{when: always}). Dans la pipeline, ouvrez l'onglet \textit{Tests}.
+  \item Ajoutez un job \texttt{e2e} dans une étape \texttt{e2e}, avec l'image \texttt{mcr.microsoft.com/playwright/java:v1.64.0-noble}, qui lance les tests tagués \texttt{e2e}. En cas d'échec, conservez les traces Playwright (\texttt{target/traces/}) comme artefacts.
+\end{enumerate}
+\end{exobox}
+
+\begin{infobox}[Si le job \texttt{tests} échoue au démarrage de Testcontainers]
+Message du type \textit{Could not find a valid Docker environment} : le service \texttt{docker:dind} n'est pas joignable. Vérifiez les variables, et que le \textit{runner} autorise le mode privilégié (sinon, signalez-le à l'enseignant). Lisez toujours le journal du job \textbf{en entier} avant de modifier le fichier.
+\end{infobox}
+
+% ================================================================
+\section{Couverture de tests (10 min)}
+
+\begin{exobox}{JaCoCo, seuil et affichage dans GitLab}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Ajoutez le plugin \texttt{jacoco-maven-plugin} au \texttt{pom.xml} (exécutions \texttt{prepare-agent}, \texttt{report} et \texttt{check}, comme dans le cours).
+  \textbf{Piège} : la configuration de \texttt{maven-surefire-plugin} fixe déjà \texttt{<argLine>} (agent Mockito), ce qui écrase l'agent de JaCoCo et donne un rapport vide. Écrivez \texttt{<argLine>@\{argLine\} -javaagent:...</argLine>}, et déclarez une propriété \texttt{<argLine></argLine>} vide dans \texttt{<properties>} (pour les cas où JaCoCo est désactivé). Lancez \texttt{./mvnw verify -Dgroups='!e2e'} et ouvrez \texttt{target/site/jacoco/index.html}. Quelle est la couverture des branches du projet ? De \texttt{VirementService} ? Quelle classe est la moins couverte, et pourquoi ?
+  \item Fixez un seuil de \textbf{70 \%} de couverture des branches. Si le build échoue, ajoutez les tests manquants plutôt que de baisser le seuil.
+  \item Dans le job \texttt{tests}, publiez le rapport \texttt{jacoco.xml} (\texttt{coverage\_report}, format \texttt{jacoco}) et affichez le pourcentage dans la pipeline (mot-clé \texttt{coverage} et la commande \texttt{awk} du fichier d'exemple). Ajoutez le badge de couverture au \texttt{README.md} (\textit{Settings} $\rightarrow$ \textit{CI/CD} $\rightarrow$ \textit{General pipelines} donne le code du badge).
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Non-régression : une \textit{merge request} qui casse tout (10 min)}
+
+\begin{exobox}{Bloquer la fusion}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Dans \textit{Settings} $\rightarrow$ \textit{Merge requests}, cochez \textit{Pipelines must succeed}.
+  \item Créez une branche \texttt{evolution-plafond}. Un « collègue pressé » y modifie \texttt{Compte.debiter} : remplacez la comparaison du découvert par une version qui accepte un débit amenant le solde \textbf{juste en dessous} du découvert autorisé (la règle R2 du TP1). Poussez et ouvrez une \textit{merge request} vers \texttt{main}.
+  \item Observez : quel job échoue ? Quel test ? Le résultat est-il visible directement dans la \textit{merge request} ? Le bouton de fusion est-il disponible ?
+  \item Corrigez sur la même branche, poussez : la pipeline repasse au vert et la fusion devient possible. Fusionnez.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Tests de mutation (20 min)}
+
+\begin{exobox}{PIT sur \texttt{VirementService}}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Ajoutez au \texttt{pom.xml} le plugin \texttt{pitest-maven} (version 1.30.2) avec la dépendance \texttt{pitest-junit5-plugin} (1.2.3), comme dans le cours. Lancez-le sur le service de virement seulement, avec ses tests du TP3 :
+\begin{codebox}
+./mvnw test-compile org.pitest:pitest-maven:mutationCoverage \
+  -DtargetClasses=fr.iutvannes.banque.service.VirementService \
+  -DtargetTests=fr.iutvannes.banque.service.VirementServiceTest
+\end{codebox}
+  \item Ouvrez \texttt{target/pit-reports/index.html}. Notez la couverture des lignes et le score de mutation. Pourquoi sont-ils différents ?
+  \item Choisissez deux mutants \textbf{survivants}. Pour chacun, expliquez dans \texttt{docs/tp6.md} quelle modification PIT a faite et pourquoi aucun de vos tests ne l'a détectée. Écrivez le test qui le tue, relancez PIT.
+  \item Un mutant survivant peut être \textbf{équivalent} (la modification ne change pas le comportement). En avez-vous rencontré un ?
+  \item Ajoutez un job \texttt{mutation} (étape \texttt{qualite}) exécuté uniquement sur la branche principale, qui conserve le rapport comme artefact.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Recette et mise en production (20 min)}
+
+On simule les environnements de la fin du cours : on ne dispose pas d'un vrai serveur de recette, mais on peut démarrer l'application \textbf{construite une seule fois} dans un job, avec sa propre base, et la tester comme on testerait la recette.
+
+\begin{exobox}{Construire une fois, tester la recette, livrer à la main}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Ajoutez un job \texttt{paquet} (étape \texttt{build}) qui construit le \texttt{.jar} (\texttt{mvn --batch-mode package -DskipTests}) et le conserve comme artefact.
+  \item Créez un profil Spring \texttt{recette} (\texttt{src/main/resources/application-recette.properties}) dont la base est donnée par des variables d'environnement (\texttt{\$\{BASE\_URL\_JDBC\}}\ldots{}), \textbf{sans aucun mot de passe écrit dans le dépôt}.
+  \item Écrivez un \textit{smoke test} tagué \texttt{smoke} qui ne démarre pas l'application mais teste une URL reçue en paramètre (\texttt{-Durl.recette=...}) : la page d'accueil répond, la connexion d'\texttt{alice} fonctionne. Réutilisez vos Page Objects.
+  \item Ajoutez un job \texttt{recette} (étape \texttt{recette}, \texttt{environment: recette}) qui, avec l'image Playwright et un service \texttt{postgres:18-alpine} :
+  \begin{itemize}[itemsep=0pt]
+    \item démarre le \texttt{.jar} de l'artefact en arrière-plan avec le profil \texttt{recette} ;
+    \item attend qu'il réponde ;
+    \item lance les tests tagués \texttt{smoke} contre lui.
+  \end{itemize}
+  Les variables secrètes (mot de passe de la base) sont déclarées dans \textit{Settings} $\rightarrow$ \textit{CI/CD} $\rightarrow$ \textit{Variables}, pas dans le fichier.
+  \item Ajoutez un job \texttt{production} (\texttt{environment: production}, \texttt{when: manual}) qui affiche seulement le nom de l'artefact qui serait déployé. Déclenchez-le à la main, puis ouvrez \textit{Operate} $\rightarrow$ \textit{Environments}.
+\end{enumerate}
+\end{exobox}
+
+% ================================================================
+\section{Rendu final}
+
+\begin{infobox}[À rendre avant \rdatelimite]
+Sur le dépôt du binôme, un \textbf{tag} \texttt{tp6} pointant sur le commit rendu, dont la \textbf{pipeline est verte} :
+\begin{codebox}
+git tag tp6
+git push origin tp6
+\end{codebox}
+Le commit doit contenir :
+\begin{itemize}[leftmargin=1.2em, itemsep=1pt]
+  \item \texttt{.gitlab-ci.yml} : jobs \texttt{compiler}, \texttt{paquet}, \texttt{tests}, \texttt{e2e}, \texttt{mutation}, \texttt{recette}, \texttt{production} ;
+  \item le \texttt{pom.xml} avec JaCoCo (seuil de 70 \% des branches) et PIT ; les tests ajoutés pour atteindre le seuil et tuer les mutants ;
+  \item le profil \texttt{recette} et les \textit{smoke tests} ;
+  \item un \texttt{README.md} à jour : comment lancer chaque catégorie de tests en local, badge de couverture, couverture et score de mutation obtenus ;
+  \item \texttt{docs/tp6.md} : temps de la pipeline, analyse de la \textit{merge request} bloquée, mutants survivants et tests écrits pour les tuer.
+\end{itemize}
+\end{infobox}
+
+\end{document}
